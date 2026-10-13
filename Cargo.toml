@@ -6,6 +6,9 @@ members = [
     "crates/anyos-loader",
     "crates/anyos-net",
     "crates/anyos-format",
+    "crates/anyos-elf",
+    "crates/anyos-linux",
+    "crates/anyos-exec",
     "apps/anyos-cli",
 ]
 
@@ -22,7 +25,11 @@ anyos-memory = { path = "crates/anyos-memory" }
 anyos-loader = { path = "crates/anyos-loader" }
 anyos-net = { path = "crates/anyos-net" }
 anyos-format = { path = "crates/anyos-format" }
-goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64"] }
+anyos-elf = { path = "crates/anyos-elf" }
+anyos-linux = { path = "crates/anyos-linux" }
+anyos-exec = { path = "crates/anyos-exec" }
+goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64", "elf32", "elf64"] }
+libc = "0.2"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
