@@ -143,6 +143,10 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
             handler: unsafe extern "system" fn(*mut ExceptionPointers) -> LONG,
         ) -> PVOID;
         fn RemoveVectoredExceptionHandler(handle: PVOID) -> ULONG;
+        /// Terminates *only* the calling thread (the guest thread); other
+        /// threads in the process are unaffected. Used to honour guest
+        /// `exit`/`exit_group` without resuming guest code.
+        fn ExitThread(code: u32) -> !;
     }
 
     const MEM_COMMIT: DWORD = 0x1000;
@@ -176,15 +180,25 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         if rec.code != EXCEPTION_BREAKPOINT {
             return EXCEPTION_CONTINUE_SEARCH;
         }
-        let int3 = ctx.rip() - 1;
+        // Depending on how the breakpoint was delivered, Rip may point at the
+        // 0xCC itself or one byte past it. Accept either, and remember which
+        // so we resume at the instruction after the INT3/NOP pair.
+        let rip = ctx.rip();
         let mut guard = GUEST.lock().unwrap();
         let state = match guard.as_mut() {
             Some(s) => s,
             None => return EXCEPTION_CONTINUE_SEARCH,
         };
-        if !state.patched.contains_key(&int3) {
+        let int3 = if state.patched.contains_key(&rip) {
+            rip
+        } else if rip > 0 && state.patched.contains_key(&(rip - 1)) {
+            rip - 1
+        } else {
             return EXCEPTION_CONTINUE_SEARCH;
-        }
+        };
+        // The patched pair is [0xCC, 0x90] where the syscall's `0f 05` was;
+        // resume at int3 + 2 either way.
+        let resume = int3 + 2;
         let args = SyscallArgs {
             nr: ctx.rax(),
             a1: ctx.rdi(),
@@ -194,23 +208,29 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
             a5: ctx.r8(),
             a6: ctx.r9(),
         };
-        match dispatch(args, state.proc.as_mut().unwrap()) {
+        let exit = match dispatch(args, state.proc.as_mut().unwrap()) {
             SyscallResult::Value(v) => {
                 ctx.set_rax(v);
-                ctx.set_rip(ctx.rip() + 1); // skip the NOP after INT3
+                ctx.set_rip(resume);
+                None
             }
             SyscallResult::Exit(code) => {
                 state.exit_code = Some(code);
-                ctx.set_rax(0);
-                ctx.set_rip(ctx.rip() + 1);
-                // Signal exit: put exit flag and let execution unwind.
-                // We'll detect this via process exit in run_entry.
+                Some(code)
             }
             SyscallResult::Unimplemented(nr) => {
                 eprintln!("[anyos] unimplemented syscall {nr}");
                 ctx.set_rax((-38i64) as u64); // -ENOSYS
-                ctx.set_rip(ctx.rip() + 1);
+                ctx.set_rip(resume);
+                None
             }
+        };
+        // exit/exit_group: stop this guest thread for real. Releasing the
+        // lock first is essential — the main thread reads GUEST after the
+        // guest thread joins and would otherwise deadlock.
+        drop(guard);
+        if let Some(code) = exit {
+            ExitThread(code as u32);
         }
         EXCEPTION_CONTINUE_EXECUTION
     }
