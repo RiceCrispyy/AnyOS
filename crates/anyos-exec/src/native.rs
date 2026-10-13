@@ -331,6 +331,102 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         .map(|ph| load_bias + ph.p_vaddr + (phoff - ph.p_offset))
         .unwrap_or(load_bias + phoff);
 
+    // ── load interpreter if dynamic ────────────────────────────────────────
+    // For dynamic ELFs, we load the PT_INTERP interpreter ELF into real memory
+    // and jump to the interpreter's entry point instead of the main entry.
+    let interp_load_base: u64;
+    let jump_entry: u64;
+
+    let interp_path = elf.program_headers.iter().find_map(|ph| {
+        if ph.p_type == program_header::PT_INTERP {
+            let start = ph.p_offset as usize;
+            let end = (ph.p_offset + ph.p_filesz) as usize;
+            bytes.get(start..end).map(|s| {
+                let s = s.strip_suffix(b"\0").unwrap_or(s);
+                String::from_utf8_lossy(s).into_owned()
+            })
+        } else {
+            None
+        }
+    });
+
+    if let Some(ref path) = interp_path {
+        let interp_bytes = std::fs::read(path)?;
+        let interp_elf =
+            Elf::parse(&interp_bytes).map_err(|e| RunError::Elf(anyos_elf::ElfError::Parse(e)))?;
+        let interp_loads: Vec<_> = interp_elf
+            .program_headers
+            .iter()
+            .filter(|ph| ph.p_type == program_header::PT_LOAD && ph.p_memsz > 0)
+            .collect();
+        let interp_min = interp_loads
+            .iter()
+            .map(|ph| ph.p_vaddr & !(PAGE_SIZE - 1))
+            .min()
+            .unwrap_or(0);
+        let interp_max = interp_loads
+            .iter()
+            .map(|ph| round_up(ph.p_vaddr + ph.p_memsz, PAGE_SIZE))
+            .max()
+            .unwrap_or(0);
+        let interp_size = (interp_max - interp_min) as usize;
+        let interp_bias = unsafe {
+            let p = valloc(0, interp_size, true)
+                .ok_or_else(|| RunError::Platform("VirtualAlloc for interpreter failed".into()))?;
+            p as u64 - interp_min
+        };
+        unsafe {
+            for ph in &interp_loads {
+                let dst = (interp_bias + ph.p_vaddr) as *mut u8;
+                let off = ph.p_offset as usize;
+                let len = ph.p_filesz as usize;
+                let src = interp_bytes
+                    .get(off..off + len)
+                    .ok_or_else(|| RunError::Platform("interp segment past EOF".into()))?;
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, len);
+            }
+        }
+        // Patch SYSCALLs in interpreter as well.
+        unsafe {
+            use goblin::elf::program_header::PF_X;
+            for ph in &interp_loads {
+                if ph.p_flags & PF_X == 0 {
+                    continue;
+                }
+                let base = (interp_bias + ph.p_vaddr) as *mut u8;
+                let len = ph.p_filesz as usize;
+                let seg = std::slice::from_raw_parts_mut(base, len);
+                for i in 0..len.saturating_sub(1) {
+                    if seg[i] == 0x0f && seg[i + 1] == 0x05 {
+                        seg[i] = 0xcc;
+                        seg[i + 1] = 0x90;
+                        patched.insert(base as u64 + i as u64, ());
+                    }
+                }
+            }
+            // Also mirror interpreter into shadow space.
+            use goblin::elf::program_header::{PF_R, PF_W};
+            for ph in &interp_loads {
+                let map_base = (interp_bias + ph.p_vaddr) & !(PAGE_SIZE - 1);
+                let memsz = round_up((ph.p_vaddr % PAGE_SIZE) + ph.p_memsz, PAGE_SIZE);
+                let prot = Protection {
+                    read: ph.p_flags & PF_R != 0,
+                    write: ph.p_flags & PF_W != 0,
+                    execute: ph.p_flags & PF_X != 0,
+                };
+                let _ = space.map(map_base, memsz, prot, "interp");
+                let data_ptr = (interp_bias + ph.p_vaddr) as *const u8;
+                let data = std::slice::from_raw_parts(data_ptr, ph.p_filesz as usize);
+                let _ = space.write_raw(interp_bias + ph.p_vaddr, data);
+            }
+        }
+        interp_load_base = interp_min + interp_bias;
+        jump_entry = interp_bias + interp_elf.header.e_entry;
+    } else {
+        interp_load_base = 0;
+        jump_entry = entry;
+    }
+
     let loaded_elf = anyos_elf::LoadedElf {
         entry,
         load_base: min_page + load_bias,
@@ -351,6 +447,17 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     };
     let stack_top = stack_mem as u64 + STACK_SIZE;
 
+    // Seed for AT_RANDOM — non-cryptographic, just needs to be non-zero.
+    let at_random: [u8; 16] = {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let mut b = [0u8; 16];
+        b[..4].copy_from_slice(&t.to_le_bytes());
+        b
+    };
+
     // Use a shadow AddressSpace to compute the stack layout.
     let mut stack_space = AddressSpace::new(
         stack_mem as u64,
@@ -368,6 +475,8 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
             at_phnum: elf.header.e_phnum as u64,
             at_phent: elf.header.e_phentsize as u64,
             at_entry: entry,
+            at_base: interp_load_base,
+            at_random,
         },
     )
     .map_err(RunError::Memory)?;
@@ -397,7 +506,7 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         ));
     }
 
-    let raw_exit = unsafe { jump_to_entry(entry, rsp) };
+    let raw_exit = unsafe { jump_to_entry(jump_entry, rsp) };
 
     unsafe { RemoveVectoredExceptionHandler(veh_handle) };
 
@@ -414,6 +523,9 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     unsafe {
         VirtualFree((min_page + load_bias) as PVOID, 0, MEM_RELEASE);
         VirtualFree(stack_mem as PVOID, 0, MEM_RELEASE);
+        if interp_load_base != 0 {
+            VirtualFree(interp_load_base as PVOID, 0, MEM_RELEASE);
+        }
     }
 
     Ok(RunResult { exit_code: code })
