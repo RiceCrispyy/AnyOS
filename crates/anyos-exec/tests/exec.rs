@@ -24,6 +24,26 @@ fn static_hello_runs() {
     assert_eq!(result.exit_code, 0, "guest exited with non-zero code");
 }
 
+/// Runs the dynamically-linked glibc fixture on Linux (kernel loads ld-linux).
+/// Skipped on Windows until a bundled interpreter is available.
+#[test]
+#[cfg(target_os = "linux")]
+fn dynamic_hello_runs() {
+    let bytes = fixture("linux-x64");
+    let result = run(
+        &bytes,
+        &RunOptions {
+            argv: &["hello"],
+            envp: &[],
+        },
+    )
+    .expect("run failed");
+    assert_eq!(
+        result.exit_code, 0,
+        "dynamic guest exited with non-zero code"
+    );
+}
+
 /// Attempting to run an ARM64 binary on an x64 host is an error, not a panic.
 #[test]
 fn arm64_rejected_on_x64() {

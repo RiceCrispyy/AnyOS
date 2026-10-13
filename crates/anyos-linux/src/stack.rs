@@ -45,6 +45,10 @@ pub struct StackParams<'a> {
     pub at_phent: u64,
     /// AT_ENTRY from the loaded ELF image.
     pub at_entry: u64,
+    /// AT_BASE: load base of the dynamic interpreter (0 for static binaries).
+    pub at_base: u64,
+    /// 16 bytes of random data for AT_RANDOM (stack canary seed etc.).
+    pub at_random: [u8; 16],
 }
 
 /// Write the initial stack into `space` and return the value that `rsp` should
@@ -73,6 +77,10 @@ pub fn build(
     let argv_offsets: Vec<usize> = p.argv.iter().map(|s| push_str(&mut strings, s)).collect();
     let envp_offsets: Vec<usize> = p.envp.iter().map(|s| push_str(&mut strings, s)).collect();
 
+    // AT_RANDOM: 16 bytes placed in the string area (just a fixed buffer here).
+    let at_random_off = strings.len();
+    strings.extend_from_slice(&p.at_random);
+
     // Align the strings region to 16 bytes.
     while strings.len() % 16 != 0 {
         strings.push(0);
@@ -82,19 +90,26 @@ pub fn build(
     let string_vaddr = p.stack_top - strings.len() as u64;
     space.write_raw(string_vaddr, &strings)?;
 
+    let at_random_vaddr = string_vaddr + at_random_off as u64;
+
     // ── pointer / integer area (grows downward from string_vaddr) ─────────
     // We build the words in a Vec<u64> (low word = low address) and write them.
     let mut words: Vec<u64> = Vec::new();
 
     // auxv (terminator last, so reversed; we'll reverse the whole block later).
-    let auxv: &[(u64, u64)] = &[
+    // AT_BASE = 0 means no interpreter (static); non-zero = interpreter load base.
+    let mut auxv: Vec<(u64, u64)> = vec![
         (3, p.at_phdr),
         (4, p.at_phent),
         (5, p.at_phnum),
-        (6, 4096),       // AT_PAGESZ
-        (9, p.at_entry), // AT_ENTRY
-        (0, 0),          // AT_NULL
+        (6, 4096),             // AT_PAGESZ
+        (9, p.at_entry),       // AT_ENTRY
+        (25, at_random_vaddr), // AT_RANDOM
     ];
+    if p.at_base != 0 {
+        auxv.push((7, p.at_base)); // AT_BASE: interpreter load address
+    }
+    auxv.push((0, 0)); // AT_NULL terminator
     for &(ty, val) in auxv.iter().rev() {
         words.push(val);
         words.push(ty);
@@ -156,6 +171,8 @@ mod tests {
             at_phnum: 8,
             at_phent: 56,
             at_entry: 0x401000,
+            at_base: 0,
+            at_random: [0u8; 16],
         };
         let rsp = build(&mut space, &p).expect("build stack");
         // argc = 1

@@ -86,6 +86,33 @@ pub struct LoadedElf {
     pub is_pie: bool,
 }
 
+/// Result of loading the PT_INTERP interpreter (dynamic linker).
+#[derive(Debug, Serialize)]
+pub struct LoadedInterp {
+    /// Virtual address of the interpreter's entry point.
+    pub entry: u64,
+    /// Load base of the interpreter image (AT_BASE for the aux vector).
+    pub load_base: u64,
+}
+
+/// Load the ELF interpreter (dynamic linker) named in a [`LoadedElf`]'s `PT_INTERP` segment.
+///
+/// `interp_bytes` is the raw bytes of the interpreter ELF itself (caller must
+/// read the file named by `loaded.linkage`). The interpreter is always a PIE
+/// (`ET_DYN`) so it will be mapped at a free address in `space`.
+///
+/// Returns `None` when `loaded` is statically linked (no interpreter to load).
+pub fn load_interpreter(
+    space: &mut AddressSpace,
+    interp_bytes: &[u8],
+) -> Result<LoadedInterp, ElfError> {
+    let loaded = load(space, interp_bytes)?;
+    Ok(LoadedInterp {
+        entry: loaded.entry,
+        load_base: loaded.load_base,
+    })
+}
+
 /// Parsed ELF properties useful for planning execution without loading.
 #[derive(Debug, Clone, Serialize)]
 pub struct ElfSummary {
