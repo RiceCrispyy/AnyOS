@@ -68,10 +68,16 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
 
     // ── Windows API declarations ──────────────────────────────────────────
 
+    // Names mirror the Win32 API.
+    #[allow(clippy::upper_case_acronyms)]
     type PVOID = *mut core::ffi::c_void;
+    #[allow(clippy::upper_case_acronyms)]
     type ULONG = u32;
+    #[allow(clippy::upper_case_acronyms)]
     type DWORD = u32;
+    #[allow(clippy::upper_case_acronyms)]
     type BOOL = i32;
+    #[allow(clippy::upper_case_acronyms)]
     type LONG = i32;
 
     #[repr(C)]
@@ -121,6 +127,9 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         fn rip(&self) -> u64 {
             self.read64(0xf8)
         }
+        fn rsp(&self) -> u64 {
+            self.read64(0x98)
+        }
         fn set_rax(&mut self, v: u64) {
             self.write64(0x78, v);
         }
@@ -165,6 +174,16 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         patched: HashMap<u64, ()>,
         proc: Option<LinuxProcess>,
         exit_code: Option<i32>,
+        /// Real-memory regions (base, len) mirrored in the shadow address
+        /// space. Synced real→shadow before each syscall (the guest writes
+        /// its own stack/image directly) and shadow→real after it (syscalls
+        /// write output buffers into the shadow space).
+        regions: Vec<(u64, u64)>,
+        /// The guest stack (base, size). Write-back is limited to
+        /// [saved_rsp, top): the VEH handler runs on this very stack, just
+        /// below the guest's rsp, so copying the whole region would
+        /// overwrite the exception dispatch's own frames.
+        stack: (u64, u64),
     }
 
     // Safety: we use this only from a single guest thread.
@@ -178,6 +197,18 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         let rec = &*(*ptrs).record;
         let ctx = &mut *(*ptrs).context;
         if rec.code != EXCEPTION_BREAKPOINT {
+            let fault = rec.info[1];
+            let insn: Vec<String> = (ctx.rip()..ctx.rip() + 8)
+                .map(|a| format!("{:02x}", unsafe { std::ptr::read_volatile(a as *const u8) }))
+                .collect();
+            eprintln!(
+                "[veh] exception {:#x} at {:?} rip={:#x} fault_addr={:#x} insn={}",
+                rec.code,
+                rec.address,
+                ctx.rip(),
+                fault,
+                insn.join(" ")
+            );
             return EXCEPTION_CONTINUE_SEARCH;
         }
         // Depending on how the breakpoint was delivered, Rip may point at the
@@ -208,6 +239,13 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
             a5: ctx.r8(),
             a6: ctx.r9(),
         };
+        // The guest writes to real memory; the dispatcher reads the shadow
+        // copy. Pull real → shadow first so input buffers (iov arrays on the
+        // stack, string arguments in .data, …) are visible to dispatch().
+        for &(base, len) in &state.regions {
+            let src = std::slice::from_raw_parts(base as *const u8, len as usize);
+            let _ = state.proc.as_mut().unwrap().memory.write_raw(base, src);
+        }
         let exit = match dispatch(args, state.proc.as_mut().unwrap()) {
             SyscallResult::Value(v) => {
                 ctx.set_rax(v);
@@ -225,6 +263,46 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
                 None
             }
         };
+        // …and push shadow → real so syscall outputs (read, getcwd, stat, …)
+        // land in the memory the guest actually reads.
+        //
+        // The stack gets special treatment: this handler runs on the guest
+        // thread's real stack, a few KB below the guest's rsp (Windows
+        // dispatches exceptions on the faulting thread's stack). Copying the
+        // whole 8MB region back would smash the exception dispatch frames
+        // mid-handler, so only [rsp, top) is written back.
+        let rsp = ctx.rsp();
+        let (stack_base, stack_size) = state.stack;
+        for &(base, len) in &state.regions {
+            if base == stack_base {
+                continue;
+            }
+            let mut buf = vec![0u8; len as usize];
+            if state
+                .proc
+                .as_ref()
+                .unwrap()
+                .memory
+                .read_raw(base, &mut buf)
+                .is_ok()
+            {
+                std::ptr::copy_nonoverlapping(buf.as_ptr(), base as *mut u8, len as usize);
+            }
+        }
+        if (stack_base..stack_base + stack_size).contains(&rsp) {
+            let len = (stack_base + stack_size - rsp) as usize;
+            let mut buf = vec![0u8; len];
+            if state
+                .proc
+                .as_ref()
+                .unwrap()
+                .memory
+                .read_raw(rsp, &mut buf)
+                .is_ok()
+            {
+                std::ptr::copy_nonoverlapping(buf.as_ptr(), rsp as *mut u8, len);
+            }
+        }
         // exit/exit_group: stop this guest thread for real. Releasing the
         // lock first is essential — the main thread reads GUEST after the
         // guest thread joins and would otherwise deadlock.
@@ -457,7 +535,7 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         linkage: anyos_elf::Linkage::Static,
         is_pie,
     };
-    let proc = LinuxProcess::new(space, loaded_elf, initial_brk);
+    let mut proc = LinuxProcess::new(space, loaded_elf, initial_brk);
 
     // ── build the stack in real memory ────────────────────────────────────
     const STACK_SIZE: u64 = 8 << 20;
@@ -510,12 +588,37 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     }
 
     // ── install VEH and run ────────────────────────────────────────────────
+    // The shadow space only holds the image so far; the dispatcher needs the
+    // stack too (iov arrays, string arguments and locals all live there).
+    proc.memory
+        .map(
+            stack_mem as u64,
+            STACK_SIZE,
+            Protection {
+                read: true,
+                write: true,
+                execute: false,
+            },
+            "stack",
+        )
+        .map_err(RunError::Memory)?;
+
+    // Real-memory regions mirrored into the shadow space, synced around each
+    // syscall (real → shadow before, shadow → real after).
+    let mut regions: Vec<(u64, u64)> = loads
+        .iter()
+        .map(|ph| (load_bias + ph.p_vaddr, ph.p_memsz))
+        .collect();
+    regions.push((stack_mem as u64, STACK_SIZE));
+
     {
         let mut guard = GUEST.lock().unwrap();
         *guard = Some(GuestState {
             patched,
             proc: Some(proc),
             exit_code: None,
+            regions,
+            stack: (stack_mem as u64, STACK_SIZE),
         });
     }
 
@@ -532,7 +635,7 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
 
     // Prefer exit code set by exit/exit_group syscall.
     let code = {
-        let mut guard = GUEST.lock().unwrap();
+        let guard = GUEST.lock().unwrap();
         if let Some(s) = guard.as_ref() {
             s.exit_code.unwrap_or(raw_exit)
         } else {

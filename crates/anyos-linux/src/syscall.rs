@@ -605,13 +605,32 @@ fn sys_arch_prctl(args: SyscallArgs, proc: &mut LinuxProcess) -> SyscallResult {
     match args.a1 {
         ARCH_SET_FS => {
             proc.fs_base = args.a2;
+            // Apply to this thread so the guest code can use FS immediately.
+            // The syscall dispatcher runs on the guest thread (VEH handler on
+            // Windows, direct dispatch on Linux), so this lands where it must.
             #[cfg(target_os = "linux")]
             unsafe {
-                // Apply to this thread so the guest code can use FS immediately.
                 extern "C" {
                     fn syscall(nr: i64, ...) -> i64;
                 }
                 syscall(158, ARCH_SET_FS as i64, args.a2 as i64);
+            }
+            // Windows x64 keeps its TEB in GS and leaves FS unused, so we can
+            // claim it for the guest. wrfsbase needs CR4.FSGSBASE; ask the OS
+            // before risking #UD.
+            #[cfg(target_os = "windows")]
+            unsafe {
+                extern "system" {
+                    fn IsProcessorFeaturePresent(feature: u32) -> i32;
+                }
+                const PF_RDWRFSGSBASE_AVAILABLE: u32 = 36;
+                if IsProcessorFeaturePresent(PF_RDWRFSGSBASE_AVAILABLE) != 0 {
+                    core::arch::asm!(
+                        "wrfsbase {0}",
+                        in(reg) args.a2,
+                        options(nomem, nostack)
+                    );
+                }
             }
             ok(0)
         }
@@ -629,27 +648,34 @@ fn sys_arch_prctl(args: SyscallArgs, proc: &mut LinuxProcess) -> SyscallResult {
     }
 }
 
+/// Resolve a guest directory fd back to a host path.
+///
+/// Only Linux can map an fd to a path (via /proc/self/fd); other hosts get
+/// ENOSYS so `getdents64` reports "not implemented" instead of failing to
+/// compile.
+#[cfg(target_os = "linux")]
+fn proc_fd_path(fd: i32) -> Result<String, u64> {
+    match std::fs::read_link(format!("/proc/self/fd/{fd}")) {
+        Ok(p) => Ok(p.to_string_lossy().into_owned()),
+        Err(_) => Err(EBADF),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn proc_fd_path(_fd: i32) -> Result<String, u64> {
+    Err(ENOSYS)
+}
+
 fn sys_getdents64(args: SyscallArgs, proc: &mut LinuxProcess) -> SyscallResult {
     let fd = args.a1 as i32;
     let buf_addr = args.a2;
     let count = args.a3 as usize;
 
     let path = match proc.fds.get(fd as usize).and_then(|s| s.as_ref()) {
-        Some(GuestFd::File(_)) => {
-            // We need the path to call read_dir. For simplicity, this only works
-            // when the fd refers to a directory we can get from /proc/self/fd.
-            #[cfg(target_os = "linux")]
-            {
-                match std::fs::read_link(format!("/proc/self/fd/{fd}")) {
-                    Ok(p) => p.to_string_lossy().into_owned(),
-                    Err(_) => return err(EBADF),
-                }
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                return err(ENOSYS);
-            }
-        }
+        Some(GuestFd::File(_)) => match proc_fd_path(fd) {
+            Ok(p) => p,
+            Err(errno) => return err(errno),
+        },
         _ => return err(EBADF),
     };
 
