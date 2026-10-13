@@ -763,11 +763,10 @@ struct ExecTarget {
 impl Drop for ExecTarget {
     fn drop(&mut self) {
         if let Some(fd) = self.fd.take() {
+            // Drop an owned File to close the fd without declaring extern "C" close.
             unsafe {
-                extern "C" {
-                    fn close(fd: i32) -> i32;
-                }
-                close(fd);
+                use std::os::unix::io::FromRawFd;
+                drop(std::fs::File::from_raw_fd(fd));
             }
         }
         if let Some(dir) = self.dir.take() {
@@ -791,33 +790,27 @@ fn linux_memfd_or_tempfile(bytes: &[u8]) -> Result<ExecTarget, RunError> {
     };
 
     if fd_rw >= 0 {
-        // Write ELF bytes into the memfd.
+        use std::os::unix::io::IntoRawFd;
+
+        // Write ELF bytes into the memfd, keeping fd_rw alive.
         let write_ok = unsafe {
             let mut f = std::fs::File::from_raw_fd(fd_rw);
             let ok = f.write_all(bytes).is_ok();
-            std::mem::forget(f); // keep fd_rw open for the reopen below
+            std::mem::forget(f); // do not close fd_rw yet
             ok
         };
 
         if write_ok {
             // Reopen as O_RDONLY *before* closing fd_rw so the inode stays alive.
-            let proc_path = format!("/proc/self/fd/{fd_rw}\0");
-            let fd_ro: i32 = unsafe {
-                extern "C" {
-                    fn open(path: *const u8, flags: i32) -> i32;
-                }
-                open(proc_path.as_ptr(), 0) // O_RDONLY
-            };
+            // Use std::fs::File::open so we never declare a conflicting `open` symbol.
+            let proc_path = format!("/proc/self/fd/{fd_rw}");
+            let ro_result = std::fs::File::open(&proc_path);
 
-            // Now close the write fd — i_writecount drops to 0.
-            unsafe {
-                extern "C" {
-                    fn close(fd: i32) -> i32;
-                }
-                close(fd_rw);
-            }
+            // Now drop the write fd — i_writecount drops to 0.
+            unsafe { drop(std::fs::File::from_raw_fd(fd_rw)) };
 
-            if fd_ro >= 0 {
+            if let Ok(ro_file) = ro_result {
+                let fd_ro = ro_file.into_raw_fd();
                 return Ok(ExecTarget {
                     path: format!("/proc/self/fd/{fd_ro}"),
                     fd: Some(fd_ro),
@@ -825,13 +818,8 @@ fn linux_memfd_or_tempfile(bytes: &[u8]) -> Result<ExecTarget, RunError> {
                 });
             }
         } else {
-            // Write failed; close fd_rw and fall through.
-            unsafe {
-                extern "C" {
-                    fn close(fd: i32) -> i32;
-                }
-                close(fd_rw);
-            }
+            // Write failed; drop fd_rw.
+            unsafe { drop(std::fs::File::from_raw_fd(fd_rw)) };
         }
         // Fall through to temp-file path.
     }
