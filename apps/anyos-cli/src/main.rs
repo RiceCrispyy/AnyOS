@@ -164,8 +164,7 @@ fn main() -> ExitCode {
 }
 
 fn run_guest(a: RunArgs) -> Result<(), String> {
-    let bytes = std::fs::read(&a.program)
-        .map_err(|e| format!("{}: {e}", a.program.display()))?;
+    let bytes = std::fs::read(&a.program).map_err(|e| format!("{}: {e}", a.program.display()))?;
 
     let name = a.program.display().to_string();
     let mut argv: Vec<&str> = vec![&name];

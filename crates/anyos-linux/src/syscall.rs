@@ -48,7 +48,8 @@ const SYS_EXIT_GROUP: u64 = 231;
 // ── errno values ───────────────────────────────────────────────────────────
 const EBADF: u64 = 9;
 const EINVAL: u64 = 22;
-#[allow(dead_code)] const ENOMEM: u64 = 12;
+#[allow(dead_code)]
+const ENOMEM: u64 = 12;
 const EFAULT: u64 = 14;
 
 fn ok(v: u64) -> SyscallResult {
@@ -262,9 +263,13 @@ fn sys_writev(args: SyscallArgs, proc: &mut LinuxProcess) -> SyscallResult {
         }
         let n = unsafe {
             #[cfg(unix)]
-            { libc_write(host_fd, buf.as_ptr(), len) }
+            {
+                libc_write(host_fd, buf.as_ptr(), len)
+            }
             #[cfg(not(unix))]
-            { win_write(host_fd, &buf) }
+            {
+                win_write(host_fd, &buf)
+            }
         };
         if n < 0 {
             return if total > 0 { ok(total) } else { err(EINVAL) };
@@ -304,8 +309,8 @@ unsafe fn libc_read(fd: i32, buf: *mut u8, len: usize) -> isize {
 #[cfg(not(unix))]
 unsafe fn win_write(fd: i32, buf: &[u8]) -> isize {
     // Windows: fd 1 = stdout, fd 2 = stderr.
-    use std::os::windows::io::FromRawHandle;
     use std::io::Write;
+    use std::os::windows::io::FromRawHandle;
     let handle = winapi_std_handle(fd);
     if handle.is_null() {
         return -1;
@@ -319,8 +324,8 @@ unsafe fn win_write(fd: i32, buf: &[u8]) -> isize {
 
 #[cfg(not(unix))]
 unsafe fn win_read(fd: i32, buf: &mut [u8]) -> isize {
-    use std::os::windows::io::FromRawHandle;
     use std::io::Read;
+    use std::os::windows::io::FromRawHandle;
     let handle = winapi_std_handle(fd);
     if handle.is_null() {
         return -1;

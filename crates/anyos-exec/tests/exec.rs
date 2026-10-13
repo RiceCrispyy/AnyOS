@@ -30,7 +30,10 @@ fn arm64_rejected_on_x64() {
     let bytes = fixture("linux-arm64");
     let err = run(
         &bytes,
-        &RunOptions { argv: &["arm"], envp: &[] },
+        &RunOptions {
+            argv: &["arm"],
+            envp: &[],
+        },
     );
     assert!(
         matches!(err, Err(anyos_exec::RunError::HostMismatch)),

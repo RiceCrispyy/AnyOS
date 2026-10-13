@@ -97,16 +97,36 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         fn write64(&mut self, off: usize, v: u64) {
             self.0[off..off + 8].copy_from_slice(&v.to_le_bytes());
         }
-        fn rax(&self)  -> u64 { self.read64(0x78) }
-        fn rdi(&self)  -> u64 { self.read64(0xb0) }
-        fn rsi(&self)  -> u64 { self.read64(0xa8) }
-        fn rdx(&self)  -> u64 { self.read64(0x88) }
-        fn r10(&self)  -> u64 { self.read64(0xc8) }
-        fn r8(&self)   -> u64 { self.read64(0xb8) }
-        fn r9(&self)   -> u64 { self.read64(0xc0) }
-        fn rip(&self)  -> u64 { self.read64(0xf8) }
-        fn set_rax(&mut self, v: u64) { self.write64(0x78, v); }
-        fn set_rip(&mut self, v: u64) { self.write64(0xf8, v); }
+        fn rax(&self) -> u64 {
+            self.read64(0x78)
+        }
+        fn rdi(&self) -> u64 {
+            self.read64(0xb0)
+        }
+        fn rsi(&self) -> u64 {
+            self.read64(0xa8)
+        }
+        fn rdx(&self) -> u64 {
+            self.read64(0x88)
+        }
+        fn r10(&self) -> u64 {
+            self.read64(0xc8)
+        }
+        fn r8(&self) -> u64 {
+            self.read64(0xb8)
+        }
+        fn r9(&self) -> u64 {
+            self.read64(0xc0)
+        }
+        fn rip(&self) -> u64 {
+            self.read64(0xf8)
+        }
+        fn set_rax(&mut self, v: u64) {
+            self.write64(0x78, v);
+        }
+        fn set_rip(&mut self, v: u64) {
+            self.write64(0xf8, v);
+        }
     }
 
     #[repr(C)]
@@ -125,14 +145,14 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         fn RemoveVectoredExceptionHandler(handle: PVOID) -> ULONG;
     }
 
-    const MEM_COMMIT: DWORD            = 0x1000;
-    const MEM_RESERVE: DWORD           = 0x2000;
-    const MEM_RELEASE: DWORD           = 0x8000;
+    const MEM_COMMIT: DWORD = 0x1000;
+    const MEM_RESERVE: DWORD = 0x2000;
+    const MEM_RELEASE: DWORD = 0x8000;
     const PAGE_EXECUTE_READWRITE: DWORD = 0x40;
-    const PAGE_READWRITE: DWORD         = 0x04;
-    const EXCEPTION_BREAKPOINT: DWORD   = 0x80000003;
+    const PAGE_READWRITE: DWORD = 0x04;
+    const EXCEPTION_BREAKPOINT: DWORD = 0x80000003;
     const EXCEPTION_CONTINUE_EXECUTION: LONG = -1;
-    const EXCEPTION_CONTINUE_SEARCH: LONG    =  0;
+    const EXCEPTION_CONTINUE_SEARCH: LONG = 0;
 
     // ── per-process global (active while the guest runs) ─────────────────
 
@@ -196,16 +216,27 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     }
 
     unsafe fn valloc(vaddr: u64, size: usize, exec: bool) -> Option<*mut u8> {
-        let prot = if exec { PAGE_EXECUTE_READWRITE } else { PAGE_READWRITE };
-        let hint = if vaddr == 0 { std::ptr::null_mut() } else { vaddr as PVOID };
+        let prot = if exec {
+            PAGE_EXECUTE_READWRITE
+        } else {
+            PAGE_READWRITE
+        };
+        let hint = if vaddr == 0 {
+            std::ptr::null_mut()
+        } else {
+            vaddr as PVOID
+        };
         let p = VirtualAlloc(hint, size, MEM_COMMIT | MEM_RESERVE, prot);
-        if p.is_null() { None } else { Some(p as *mut u8) }
+        if p.is_null() {
+            None
+        } else {
+            Some(p as *mut u8)
+        }
     }
 
     // ── parse + load ───────────────────────────────────────────────────────
 
-    let elf = Elf::parse(bytes)
-        .map_err(|e| RunError::Elf(anyos_elf::ElfError::Parse(e)))?;
+    let elf = Elf::parse(bytes).map_err(|e| RunError::Elf(anyos_elf::ElfError::Parse(e)))?;
     let is_pie = elf.header.e_type == goblin::elf::header::ET_DYN;
 
     let loads: Vec<_> = elf
@@ -217,12 +248,16 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         return Err(RunError::Platform("no PT_LOAD segments".into()));
     }
 
-    let min_page = loads.iter()
+    let min_page = loads
+        .iter()
         .map(|ph| ph.p_vaddr & !(PAGE_SIZE - 1))
-        .min().unwrap();
-    let max_end = loads.iter()
+        .min()
+        .unwrap();
+    let max_end = loads
+        .iter()
         .map(|ph| round_up(ph.p_vaddr + ph.p_memsz, PAGE_SIZE))
-        .max().unwrap();
+        .max()
+        .unwrap();
     let image_size = (max_end - min_page) as usize;
 
     let load_bias = unsafe {
@@ -237,7 +272,8 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
             let dst = (load_bias + ph.p_vaddr) as *mut u8;
             let off = ph.p_offset as usize;
             let len = ph.p_filesz as usize;
-            let src = bytes.get(off..off + len)
+            let src = bytes
+                .get(off..off + len)
                 .ok_or_else(|| RunError::Platform("segment past EOF".into()))?;
             std::ptr::copy_nonoverlapping(src.as_ptr(), dst, len);
         }
@@ -250,7 +286,9 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     unsafe {
         use goblin::elf::program_header::PF_X;
         for ph in &loads {
-            if ph.p_flags & PF_X == 0 { continue; }
+            if ph.p_flags & PF_X == 0 {
+                continue;
+            }
             let base = (load_bias + ph.p_vaddr) as *mut u8;
             let len = ph.p_filesz as usize;
             let seg = std::slice::from_raw_parts_mut(base, len);
@@ -270,10 +308,7 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
         use goblin::elf::program_header::{PF_R, PF_W, PF_X};
         for ph in &loads {
             let map_base = (load_bias + ph.p_vaddr) & !(PAGE_SIZE - 1);
-            let memsz = round_up(
-                (ph.p_vaddr % PAGE_SIZE) + ph.p_memsz,
-                PAGE_SIZE,
-            );
+            let memsz = round_up((ph.p_vaddr % PAGE_SIZE) + ph.p_memsz, PAGE_SIZE);
             let prot = Protection {
                 read: ph.p_flags & PF_R != 0,
                 write: ph.p_flags & PF_W != 0,
@@ -317,17 +352,25 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     let stack_top = stack_mem as u64 + STACK_SIZE;
 
     // Use a shadow AddressSpace to compute the stack layout.
-    let mut stack_space = AddressSpace::new(stack_mem as u64, stack_top + PAGE_SIZE, STACK_SIZE + PAGE_SIZE);
-    let rsp = build_stack(&mut stack_space, &StackParams {
-        stack_top,
-        stack_size: STACK_SIZE,
-        argv: opts.argv,
-        envp: opts.envp,
-        at_phdr: phdr_vaddr,
-        at_phnum: elf.header.e_phnum as u64,
-        at_phent: elf.header.e_phentsize as u64,
-        at_entry: entry,
-    }).map_err(RunError::Memory)?;
+    let mut stack_space = AddressSpace::new(
+        stack_mem as u64,
+        stack_top + PAGE_SIZE,
+        STACK_SIZE + PAGE_SIZE,
+    );
+    let rsp = build_stack(
+        &mut stack_space,
+        &StackParams {
+            stack_top,
+            stack_size: STACK_SIZE,
+            argv: opts.argv,
+            envp: opts.envp,
+            at_phdr: phdr_vaddr,
+            at_phnum: elf.header.e_phnum as u64,
+            at_phent: elf.header.e_phentsize as u64,
+            at_entry: entry,
+        },
+    )
+    .map_err(RunError::Memory)?;
 
     // Copy computed stack bytes to real memory.
     unsafe {
@@ -340,12 +383,18 @@ fn windows_run(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErro
     // ── install VEH and run ────────────────────────────────────────────────
     {
         let mut guard = GUEST.lock().unwrap();
-        *guard = Some(GuestState { patched, proc: Some(proc), exit_code: None });
+        *guard = Some(GuestState {
+            patched,
+            proc: Some(proc),
+            exit_code: None,
+        });
     }
 
     let veh_handle = unsafe { AddVectoredExceptionHandler(1, veh) };
     if veh_handle.is_null() {
-        return Err(RunError::Platform("AddVectoredExceptionHandler failed".into()));
+        return Err(RunError::Platform(
+            "AddVectoredExceptionHandler failed".into(),
+        ));
     }
 
     let raw_exit = unsafe { jump_to_entry(entry, rsp) };
@@ -408,7 +457,14 @@ unsafe fn jump_to_entry(entry: u64, rsp: u64) -> i32 {
     }
 
     let params = Box::into_raw(Box::new((entry, rsp))) as *mut core::ffi::c_void;
-    let h = CreateThread(std::ptr::null_mut(), 0, guest_thread, params, 0, std::ptr::null_mut());
+    let h = CreateThread(
+        std::ptr::null_mut(),
+        0,
+        guest_thread,
+        params,
+        0,
+        std::ptr::null_mut(),
+    );
     if h.is_null() {
         return 1;
     }
@@ -423,12 +479,7 @@ unsafe fn jump_to_entry(entry: u64, rsp: u64) -> i32 {
 #[unsafe(naked)]
 unsafe extern "C" fn run_entry(entry: u64, rsp: u64) {
     // RCX = entry, RDX = rsp (Windows x64 calling convention).
-    core::arch::naked_asm!(
-        "mov rsp, rdx",
-        "xor rbp, rbp",
-        "xor eax, eax",
-        "jmp rcx",
-    );
+    core::arch::naked_asm!("mov rsp, rdx", "xor rbp, rbp", "xor eax, eax", "jmp rcx",);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,7 +511,9 @@ fn linux_direct(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErr
     }
     let status = cmd.status()?;
     let _ = std::fs::remove_dir_all(&dir);
-    Ok(RunResult { exit_code: status.code().unwrap_or(1) })
+    Ok(RunResult {
+        exit_code: status.code().unwrap_or(1),
+    })
 }
 
 #[cfg(target_os = "linux")]

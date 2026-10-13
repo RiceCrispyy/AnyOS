@@ -32,7 +32,10 @@ fn dynamic_x64_summarise() {
     assert_eq!(s.arch, ElfArch::X86_64);
     match &s.linkage {
         Linkage::Dynamic { interpreter } => {
-            assert!(interpreter.contains("ld-linux"), "unexpected interp: {interpreter}");
+            assert!(
+                interpreter.contains("ld-linux"),
+                "unexpected interp: {interpreter}"
+            );
         }
         _ => panic!("expected dynamic linkage"),
     }

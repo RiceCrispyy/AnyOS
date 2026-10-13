@@ -105,11 +105,7 @@ pub fn summarise(bytes: &[u8]) -> Result<ElfSummary, ElfError> {
         Some(path) => Linkage::Dynamic { interpreter: path },
         None => Linkage::Static,
     };
-    let shared_libraries = elf
-        .libraries
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let shared_libraries = elf.libraries.iter().map(|s| s.to_string()).collect();
     Ok(ElfSummary {
         arch,
         linkage,
@@ -193,9 +189,7 @@ pub fn load(space: &mut AddressSpace, bytes: &[u8]) -> Result<LoadedElf, ElfErro
         let phoff = elf.header.e_phoff;
         loads
             .iter()
-            .find(|ph| {
-                phoff >= ph.p_offset && phoff < ph.p_offset + ph.p_filesz
-            })
+            .find(|ph| phoff >= ph.p_offset && phoff < ph.p_offset + ph.p_filesz)
             .map(|ph| load_bias + ph.p_vaddr + (phoff - ph.p_offset))
             .unwrap_or(load_bias + phoff)
     };
@@ -227,9 +221,7 @@ fn parse(bytes: &[u8]) -> Result<Elf<'_>, ElfError> {
         return Err(ElfError::NotElf);
     }
     let elf = Elf::parse(bytes)?;
-    if elf.header.e_ident[goblin::elf::header::EI_CLASS]
-        != goblin::elf::header::ELFCLASS64
-    {
+    if elf.header.e_ident[goblin::elf::header::EI_CLASS] != goblin::elf::header::ELFCLASS64 {
         return Err(ElfError::NotElf64);
     }
     match elf.header.e_type {
@@ -265,5 +257,9 @@ fn flags_to_prot(flags: u32) -> Protection {
     let r = flags & PF_R != 0;
     let w = flags & PF_W != 0;
     let x = flags & PF_X != 0;
-    Protection { read: r, write: w, execute: x }
+    Protection {
+        read: r,
+        write: w,
+        execute: x,
+    }
 }

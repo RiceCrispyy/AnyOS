@@ -49,7 +49,10 @@ pub struct StackParams<'a> {
 
 /// Write the initial stack into `space` and return the value that `rsp` should
 /// hold when control is transferred to the guest entry point.
-pub fn build(space: &mut AddressSpace, p: &StackParams<'_>) -> Result<u64, anyos_memory::MemoryError> {
+pub fn build(
+    space: &mut AddressSpace,
+    p: &StackParams<'_>,
+) -> Result<u64, anyos_memory::MemoryError> {
     let stack_bottom = p.stack_top - p.stack_size;
     space.map(stack_bottom, p.stack_size, Protection::RW, "stack")?;
 
@@ -88,9 +91,9 @@ pub fn build(space: &mut AddressSpace, p: &StackParams<'_>) -> Result<u64, anyos
         (3, p.at_phdr),
         (4, p.at_phent),
         (5, p.at_phnum),
-        (6, 4096),  // AT_PAGESZ
+        (6, 4096),       // AT_PAGESZ
         (9, p.at_entry), // AT_ENTRY
-        (0, 0),     // AT_NULL
+        (0, 0),          // AT_NULL
     ];
     for &(ty, val) in auxv.iter().rev() {
         words.push(val);
@@ -105,7 +108,6 @@ pub fn build(space: &mut AddressSpace, p: &StackParams<'_>) -> Result<u64, anyos
     // argv[]: null-terminated.
     words.push(0);
     for &off in argv_offsets.iter().rev() {
-        
         words.push(string_vaddr + off as u64);
     }
     // argc
