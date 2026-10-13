@@ -1,53 +1,31 @@
-# Contributing
+## Building the macOS launcher (Xcode-free)
 
-## Prerequisites
-
-- Rust 1.82 or newer (stable) with `rustfmt` and `clippy` enabled.
-- On macOS: Xcode Command Line Tools or the full Xcode.app for SDK headers,
-  `ld`, `clang`, `llvm-lipo` and `llvm-dlltool`. The SDK toolchain from
-  `xcrun` provides all of these; it is enough to build this workspace.
-- On Windows and Linux: `clang`, `lld-link` and `llvm-dlltool` for the
-  Windows/ELF fixtures (see `tests/fixtures/src/build.sh`).
-
-## Formatting and linting
+`anyos/Launcher` is a SwiftPM package with no `.xcodeproj`. It uses the macOS
+SDK from Xcode Command Line Tools, so a full Xcode.app install is not required.
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cd anyos/Launcher
+xcodebuild -scheme AnyOSLauncher -configuration Debug
 ```
 
-## Testing
-
-Run the unit and integration tests in all crates plus the CLI tests:
+The scheme produces `build/AnyOSLauncher.app`. To bundle the `anyos` binary and
+the guest programs:
 
 ```sh
-cargo test
+# from the repository root
+python3 scripts/bundle_launcher.py
 ```
 
-The fixture corpus (ignored tests) loads every `.exe`/`.dll` under a directory
-twice and checks that every relocation lands at the same image offset:
+`scripts/bundle_launcher.py` copies `target/release/anyos` into
+`anyos/Launcher/Contents/MacOS/`, copies the fixtures into
+`Contents/Resources/binary/`, and stamps the `Info.plist` version. It is a
+plain Python script with no third-party dependencies.
+
+## Testing the launcher on macOS
 
 ```sh
-ANYOS_CORPUS=/some/windows/bins cargo test -p anyos-loader -- --ignored --nocapture
+open -a build/AnyOSLauncher -- anyos/tests/fixtures/bin/x86_64/hello_console.exe
 ```
 
-## Cross-target builds
-
-Build macOS targets on macOS with stable Rust:
-
-```sh
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-cargo build --release --target aarch64-apple-darwin
-cargo build --release --target x86_64-apple-darwin
-```
-
-The fixture build scripts (`build-other.sh`, `build.sh`) use the host SDK toolchain
-from `xcrun` for the macOS slices and zig cc for the Linux slices.
-
-## Commit style
-
-Releases are cut from `main` with the [`release`](https://github.com/release-bank/release)
-toolchain (conventional commits + `release drafter`). Keep the
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format in
-`CHANGELOG.md` and add a `RELEASE_NOTES_$VERSION.md` for every tagged release.
+or, from inside the app, drag `hello_console.exe` onto the window. Both paths
+run through the bundled `Contents/MacOS/anyos`.
