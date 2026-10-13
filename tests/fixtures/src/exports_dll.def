@@ -1,0 +1,6 @@
+LIBRARY exports_dll
+EXPORTS
+  anyos_add
+  anyos_mul
+  anyos_hidden @7 NONAME
+  counter_ptr DATA
