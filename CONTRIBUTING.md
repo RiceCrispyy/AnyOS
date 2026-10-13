@@ -8,13 +8,7 @@ cd anyos/Launcher
 xcodebuild -scheme AnyOSLauncher -configuration Debug
 ```
 
-The scheme produces `build/AnyOSLauncher.app`. To bundle the `anyos` binary and
-the guest programs:
-
-```sh
-# from the repository root
-python3 scripts/bundle_launcher.py
-```
+That produces `build/AnyOSLauncher.app`.
 
 `scripts/bundle_launcher.py` copies `target/release/anyos` into
 `anyos/Launcher/Contents/MacOS/`, copies the fixtures into
