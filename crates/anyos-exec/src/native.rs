@@ -786,7 +786,7 @@ fn linux_memfd_or_tempfile(bytes: &[u8]) -> Result<ExecTarget, RunError> {
         extern "C" {
             fn syscall(nr: i64, ...) -> i64;
         }
-        syscall(319, b"anyos-guest\0".as_ptr() as i64, 0i64) as i32
+        syscall(319, c"anyos-guest".as_ptr() as i64, 0i64) as i32
     };
 
     if fd_rw >= 0 {
