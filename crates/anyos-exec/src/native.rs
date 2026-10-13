@@ -650,8 +650,11 @@ fn linux_direct(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErr
 
 #[cfg(target_os = "linux")]
 fn linux_tempdir() -> Result<std::path::PathBuf, RunError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
-    p.push(format!("anyos-{}", std::process::id()));
+    p.push(format!("anyos-{}-{seq}", std::process::id()));
     std::fs::create_dir_all(&p)?;
     Ok(p)
 }

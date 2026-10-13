@@ -23,7 +23,8 @@ use serde::Serialize;
 pub enum GuestFd {
     /// Forwarded to a real host file descriptor (e.g., stdin/stdout/stderr).
     Host(i32),
-    // Future: guest pipes, anonymous memory objects, etc.
+    /// A real file opened on the host via `open`/`openat`.
+    File(std::fs::File),
 }
 
 /// Runtime state for one Linux guest process.
@@ -36,6 +37,8 @@ pub struct LinuxProcess {
     pub brk: u64,
     /// Open file descriptors (index = guest fd number).
     pub fds: Vec<Option<GuestFd>>,
+    /// FS base set via ARCH_SET_FS (thread-local storage pointer).
+    pub fs_base: u64,
 }
 
 impl LinuxProcess {
@@ -52,6 +55,7 @@ impl LinuxProcess {
                 Some(GuestFd::Host(1)),
                 Some(GuestFd::Host(2)),
             ],
+            fs_base: 0,
         }
     }
 }
