@@ -1,0 +1,21 @@
+[package]
+name = "anyos-exec"
+description = "Execution engine for AnyOS: runs Linux ELF programs on Windows via SYSCALL-patching and Vectored Exception Handling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyos-elf.workspace = true
+anyos-linux.workspace = true
+anyos-memory.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+goblin.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

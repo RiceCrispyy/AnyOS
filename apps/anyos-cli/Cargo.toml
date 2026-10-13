@@ -17,9 +17,11 @@ anyos-memory.workspace = true
 anyos-loader.workspace = true
 anyos-net.workspace = true
 anyos-format.workspace = true
+anyos-elf.workspace = true
+anyos-exec.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true

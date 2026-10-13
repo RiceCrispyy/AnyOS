@@ -56,6 +56,8 @@ dependencies = [
 name = "anyos-cli"
 version = "0.1.0"
 dependencies = [
+ "anyos-elf",
+ "anyos-exec",
  "anyos-format",
  "anyos-loader",
  "anyos-memory",
@@ -68,11 +70,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyos-elf"
+version = "0.1.0"
+dependencies = [
+ "anyos-memory",
+ "goblin",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "anyos-exec"
+version = "0.1.0"
+dependencies = [
+ "anyos-elf",
+ "anyos-linux",
+ "anyos-memory",
+ "goblin",
+ "libc",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "anyos-format"
 version = "0.1.0"
 dependencies = [
  "anyos-pe",
  "goblin",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "anyos-linux"
+version = "0.1.0"
+dependencies = [
+ "anyos-elf",
+ "anyos-memory",
  "serde",
  "thiserror",
 ]

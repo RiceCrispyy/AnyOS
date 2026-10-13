@@ -6,6 +6,9 @@
 //! * `anyos load <file>` goes one step further: it maps the image (and application
 //!   DLLs beside it) into an emulated guest address space, relocates and binds it,
 //!   and prints the resulting process layout. Still nothing is executed.
+//! * `anyos run <file>` runs a Linux x86-64 ELF on the current host.
+//!   On Windows x64 the guest code runs natively with AnyOS intercepting Linux
+//!   syscalls. On Linux the ELF is run directly (useful for testing).
 //! * `anyos redirect ...` edits a program's own network redirects, stored in
 //!   `<program>.anyos.toml` beside it. They apply only to that program when AnyOS
 //!   runs it; the host's hosts file and DNS are never touched.
@@ -13,6 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyos_exec::{run as exec_run, RunOptions};
 use anyos_format::{Detected, GuestMode, ProgramSummary};
 use anyos_loader::{BasePolicy, Binding, LoadOptions, Process};
 use anyos_net::{profile_path, AppProfile, NetPolicy};
@@ -40,9 +44,20 @@ enum Command {
     Inspect(InspectArgs),
     /// Map, relocate and bind an image into an emulated guest process (dry run).
     Load(LoadArgs),
+    /// Run a Linux x86-64 ELF on this host.
+    Run(RunArgs),
     /// Per-program network redirects, applied inside AnyOS (not the host OS).
     #[command(subcommand)]
     Redirect(RedirectCommand),
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// Path to the Linux ELF executable.
+    program: PathBuf,
+    /// Arguments passed to the guest program (argv[1..]).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    args: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -136,6 +151,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Inspect(a) => inspect(a),
         Command::Load(a) => load(a),
+        Command::Run(a) => run_guest(a),
         Command::Redirect(c) => redirect(c),
     };
     match result {
@@ -145,6 +161,31 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_guest(a: RunArgs) -> Result<(), String> {
+    let bytes = std::fs::read(&a.program)
+        .map_err(|e| format!("{}: {e}", a.program.display()))?;
+
+    let name = a.program.display().to_string();
+    let mut argv: Vec<&str> = vec![&name];
+    for s in &a.args {
+        argv.push(s.as_str());
+    }
+
+    let result = exec_run(
+        &bytes,
+        &RunOptions {
+            argv: &argv,
+            envp: &[],
+        },
+    )
+    .map_err(|e| format!("run failed: {e}"))?;
+
+    if result.exit_code != 0 {
+        return Err(format!("guest exited with code {}", result.exit_code));
+    }
+    Ok(())
 }
 
 fn parse_u64(s: &str) -> Result<u64, String> {
