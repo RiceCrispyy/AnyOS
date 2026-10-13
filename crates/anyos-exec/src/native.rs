@@ -723,19 +723,18 @@ unsafe extern "C" fn run_entry(entry: u64, rsp: u64) {
 
 #[cfg(target_os = "linux")]
 fn linux_direct(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunError> {
-    use std::io::Write;
     use std::process::Command;
 
-    let dir = linux_tempdir()?;
-    let exe = dir.join("guest.elf");
-    {
-        let mut f = std::fs::File::create(&exe)?;
-        f.write_all(bytes)?;
-        use std::os::unix::fs::PermissionsExt;
-        f.set_permissions(std::fs::Permissions::from_mode(0o755))?;
-    }
+    // Write ELF into an anonymous in-memory file (memfd_create), then
+    // reopen it read-only before exec.  This avoids ETXTBSY: Linux refuses
+    // to exec a file that has an open write descriptor, so we must ensure
+    // i_writecount == 0 at exec time while still keeping the file alive.
+    //
+    // Fallback: if memfd_create is unavailable (unlikely on any kernel
+    // ≥ 3.17), use a named temp file instead.
+    let exe_path = linux_memfd_or_tempfile(bytes)?;
 
-    let mut cmd = Command::new(&exe);
+    let mut cmd = Command::new(&exe_path.path);
     if opts.argv.len() > 1 {
         cmd.args(&opts.argv[1..]);
     }
@@ -745,19 +744,124 @@ fn linux_direct(bytes: &[u8], opts: &RunOptions<'_>) -> Result<RunResult, RunErr
         }
     }
     let status = cmd.status()?;
-    let _ = std::fs::remove_dir_all(&dir);
     Ok(RunResult {
         exit_code: status.code().unwrap_or(1),
     })
 }
 
+/// A self-cleaning exec target.  On drop the underlying resource is freed.
 #[cfg(target_os = "linux")]
-fn linux_tempdir() -> Result<std::path::PathBuf, RunError> {
+struct ExecTarget {
+    path: String,
+    // When Some, we own a read-only fd that keeps the anonymous file alive.
+    // When None, `path` points to a real file that we must unlink.
+    fd: Option<i32>,
+    dir: Option<std::path::PathBuf>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ExecTarget {
+    fn drop(&mut self) {
+        if let Some(fd) = self.fd.take() {
+            unsafe {
+                extern "C" {
+                    fn close(fd: i32) -> i32;
+                }
+                close(fd);
+            }
+        }
+        if let Some(dir) = self.dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_memfd_or_tempfile(bytes: &[u8]) -> Result<ExecTarget, RunError> {
+    use std::io::Write;
+    use std::os::unix::io::FromRawFd;
+
+    // ── try memfd_create ──────────────────────────────────────────────
+    // SYS_memfd_create = 319 on x86-64 Linux.
+    let fd_rw: i32 = unsafe {
+        extern "C" {
+            fn syscall(nr: i64, ...) -> i64;
+        }
+        syscall(319, b"anyos-guest\0".as_ptr() as i64, 0i64) as i32
+    };
+
+    if fd_rw >= 0 {
+        // Write ELF bytes into the memfd.
+        let write_ok = unsafe {
+            let mut f = std::fs::File::from_raw_fd(fd_rw);
+            let ok = f.write_all(bytes).is_ok();
+            std::mem::forget(f); // keep fd_rw open for the reopen below
+            ok
+        };
+
+        if write_ok {
+            // Reopen as O_RDONLY *before* closing fd_rw so the inode stays alive.
+            let proc_path = format!("/proc/self/fd/{fd_rw}\0");
+            let fd_ro: i32 = unsafe {
+                extern "C" {
+                    fn open(path: *const u8, flags: i32) -> i32;
+                }
+                open(proc_path.as_ptr(), 0) // O_RDONLY
+            };
+
+            // Now close the write fd — i_writecount drops to 0.
+            unsafe {
+                extern "C" {
+                    fn close(fd: i32) -> i32;
+                }
+                close(fd_rw);
+            }
+
+            if fd_ro >= 0 {
+                return Ok(ExecTarget {
+                    path: format!("/proc/self/fd/{fd_ro}"),
+                    fd: Some(fd_ro),
+                    dir: None,
+                });
+            }
+        } else {
+            // Write failed; close fd_rw and fall through.
+            unsafe {
+                extern "C" {
+                    fn close(fd: i32) -> i32;
+                }
+                close(fd_rw);
+            }
+        }
+        // Fall through to temp-file path.
+    }
+
+    // ── fallback: named temp file ─────────────────────────────────────
+    linux_tempfile(bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tempfile(bytes: &[u8]) -> Result<ExecTarget, RunError> {
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let mut p = std::env::temp_dir();
-    p.push(format!("anyos-{}-{seq}", std::process::id()));
-    std::fs::create_dir_all(&p)?;
-    Ok(p)
+
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("anyos-{}-{seq}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let exe = dir.join("guest.elf");
+
+    {
+        let mut f = std::fs::File::create(&exe)?;
+        f.write_all(bytes)?;
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    Ok(ExecTarget {
+        path: exe.to_string_lossy().into_owned(),
+        fd: None,
+        dir: Some(dir),
+    })
 }
