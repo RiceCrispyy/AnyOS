@@ -1,8 +1,8 @@
 # AnyOS
 
 A standalone runtime written in Rust that aims to run programs built for one OS
-on another, starting with Windows programs on macOS (then Linux and ChromeOS). It
-does not use Wine and does not need a VM.
+on another, starting with Windows programs on macOS (then Linux and ChromeOS).
+It does not use Wine and does not need a VM.
 
 **Status:** milestones 1 and 2 are done. AnyOS can inspect Windows PE files and
 load them into an emulated guest process: map, relocate, bind imports and set up
@@ -23,7 +23,20 @@ cargo build --release
 ./target/release/anyos inspect some-linux-program          # ELF and Mach-O work too
 ```
 
-### Per-program network redirects
+## Launching a macOS program on this macOS host
+
+`anyos inspect --host macos-arm64` prints what AnyOS would need; the
+`anyos/Launcher` subdirectory is the companion macOS helper used to start the
+guest image through Xcode (no coding required).
+
+1. Install Xcode (or the macOS SDK + command-line tools) and create a signed
+   bundle with the helper in `anyos/Launcher`.
+2. Add the guest image to the launcher's `binaries/` directory as a sibling of
+   `Info.plist`.
+3. Sign and launch from the launcher (see [docs/architecture.md](docs/architecture.md)
+   "Revised milestone 3 for macOS").
+
+## Per-program network redirects
 
 A program's own traffic can be sent to a different server without touching the
 host's hosts file or DNS. The setting lives in `<program>.anyos.toml` beside the
@@ -39,7 +52,7 @@ anyos redirect remove Game.exe oldgame.example
 
 Example (abridged; `uses_dll.exe` imports from `exports_dll.dll` sitting beside it):
 
-```
+```text
 $ anyos load --rebase --imports tests/fixtures/bin/x86/uses_dll.exe
 Module uses_dll.exe
   Base:        0x10000 (rebased from 0x400000)  size 0x5000
@@ -50,19 +63,17 @@ Module uses_dll.exe
     kernel32.dll!ExitProcess  IAT 0x12078 -> 0x20000  (call gate stub #0)
 ```
 
-First host: macOS. It builds with stable Rust on Apple Silicon and Intel Macs
-(`brew install rust`, or rustup). The macOS plan is in the architecture doc.
-
 ## Layout
 
-```
+```text
 crates/anyos-pe       PE/COFF inspection, DLL catalog, compatibility report (never executes)
 crates/anyos-memory   guest address space: regions, page protections, checked access
 crates/anyos-loader   process assembly: map, relocate, load DLLs, bind, TLS, protect; API call gate
 crates/anyos-format   format detection (PE, ELF, Mach-O incl. universal) and any-OS run plan
 crates/anyos-net      per-program network policy (redirects) and the <program>.anyos.toml profile
 apps/anyos-cli        the `anyos` command
-tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux and macOS + build scripts
+anyos/Launcher        macOS helper: sign and launch a macOS guest image from Xcode
+tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux, macOS + build scripts
 docs/architecture.md  design, interfaces, security model, roadmap
 ```
 
@@ -89,8 +100,8 @@ reproducible.
   fail cleanly.
 - The loader never implements Windows APIs. System imports are bound to call-gate
   stubs, so guest code reaches the runtime through one narrow, auditable door.
-- Host-specific code stays out of the core. Third-party code (goblin for PE
-  headers) is wrapped behind AnyOS's own types.
+- Host-specific code stays out of the core. Third-party code (goblin for PE)
+  is wrapped behind AnyOS's own types.
 
 ## License
 
@@ -99,5 +110,5 @@ AnyOS is source-available under the
 students, researchers, charities, schools and government bodies can use, change
 and share it for free, as long as they keep the copyright notice and license
 with it. Businesses and other commercial users need a separate license; see
-[COMMERCIAL.md](COMMERCIAL.md). Third-party files in `tests/fixtures/third_party`
-keep their own licenses.
+[COMMERCIAL.md](COMMERCIAL.md). Third-party files in
+`tests/fixtures/third_party` keep their own licenses.

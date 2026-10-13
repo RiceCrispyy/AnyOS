@@ -1,2 +1,4 @@
 /target
 *.whl
+anyos/Launcher
+build/
