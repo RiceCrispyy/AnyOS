@@ -316,7 +316,10 @@ impl AnyosApp {
                                     ui.menu_button("More", |ui| {
                                         for (label, path) in &app.programs {
                                             if ui.button(format!("Run {label}")).clicked() {
-                                                picked = Some(ListPick::Open { path: path.clone(), run: true });
+                                                picked = Some(ListPick::Open {
+                                                    path: path.clone(),
+                                                    run: true,
+                                                });
                                                 ui.close();
                                             }
                                         }
@@ -331,7 +334,10 @@ impl AnyosApp {
                                     "What AnyOS knows about the program, before running it",
                                 );
                             if details.clicked() {
-                                picked = main.map(|(_, p)| ListPick::Open { path: p.clone(), run: false });
+                                picked = main.map(|(_, p)| ListPick::Open {
+                                    path: p.clone(),
+                                    run: false,
+                                });
                             }
                             let run = egui::Button::new(RichText::new("▶  Run").strong())
                                 .min_size(egui::vec2(80.0, 26.0));
@@ -340,7 +346,9 @@ impl AnyosApp {
                                 Some(_) if !can_run => {
                                     "The anyos command-line tool was not found.".to_string()
                                 }
-                                Some(_) if busy => "Another program is already running.".to_string(),
+                                Some(_) if busy => {
+                                    "Another program is already running.".to_string()
+                                }
                                 Some((label, _)) => format!("Run {label}"),
                             };
                             let r = ui
@@ -348,10 +356,12 @@ impl AnyosApp {
                                 .on_hover_text(&hover)
                                 .on_disabled_hover_text(&hover);
                             if r.clicked() {
-                                picked = main.map(|(_, p)| ListPick::Open { path: p.clone(), run: true });
+                                picked = main.map(|(_, p)| ListPick::Open {
+                                    path: p.clone(),
+                                    run: true,
+                                });
                             }
-                            let del = egui::Button::new("🗑")
-                                .min_size(egui::vec2(32.0, 26.0));
+                            let del = egui::Button::new("🗑").min_size(egui::vec2(32.0, 26.0));
                             if ui
                                 .add_enabled(!busy, del)
                                 .on_hover_text(format!("Uninstall {}", app.name))
