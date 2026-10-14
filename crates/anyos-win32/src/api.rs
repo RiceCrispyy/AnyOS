@@ -152,8 +152,10 @@ fn write_console_w(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
         return Ok(0);
     };
     let units: Vec<u16> = raw
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .collect();
     let text = String::from_utf16_lossy(&units);
     Ok(write_out(t, handle, text.as_bytes(), written, chars))
