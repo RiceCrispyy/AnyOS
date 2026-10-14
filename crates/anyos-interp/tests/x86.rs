@@ -163,12 +163,37 @@ fn rep_stos_fills_and_counts_down() {
 
 #[test]
 fn unsupported_instructions_are_named() {
-    // fld1 (x87)
-    let (_, stop) = run(true, &[0xD9, 0xE8], |_| {});
+    // xsave [rax]
+    let (_, stop) = run(true, &[0x0F, 0xAE, 0x20], |c| c.regs[RAX] = DATA);
     let StopReason::Fault(GuestFault::Unsupported { what, .. }) = stop else {
         panic!("{stop:?}")
     };
-    assert_eq!(what, "x87 floating point");
+    assert_eq!(what, "xsave family");
+}
+
+#[test]
+fn x87_arithmetic_and_exact_integer_round_trips() {
+    let code = [
+        0xD9, 0xE8, // fld1
+        0xD9, 0xEB, // fldpi
+        0xDE, 0xC1, // faddp st(1), st
+        0xDB, 0x1C, 0x25, 0x00, 0x00, 0x02, 0x00, // fistp dword [DATA]
+        0x48, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, // mov rax, i64::MAX
+        0x48, 0x89, 0x04, 0x25, 0x08, 0x00, 0x02, 0x00, // mov [DATA+8], rax
+        0xDF, 0x2C, 0x25, 0x08, 0x00, 0x02, 0x00, // fild qword [DATA+8]
+        0xDF, 0x3C, 0x25, 0x10, 0x00, 0x02, 0x00, // fistp qword [DATA+16]
+        0xD9, 0xE8, // fld1
+        0xD9, 0xEE, // fldz
+        0xDF, 0xF1, // fcomip st, st(1): 0 < 1 sets CF
+        0x8B, 0x04, 0x25, 0x00, 0x00, 0x02, 0x00, // mov eax, [DATA]
+        0x48, 0x8B, 0x1C, 0x25, 0x10, 0x00, 0x02, 0x00, // mov rbx, [DATA+16]
+    ];
+    let (c, stop) = run(true, &code, |_| {});
+    ends_at_int3(&code, &stop);
+    assert_eq!(c.regs[RAX], 4); // 1 + pi rounds to 4
+    assert_eq!(c.regs[RBX], i64::MAX as u64);
+    assert_eq!(c.rflags & (CF | ZF), CF);
+    assert_eq!(c.fpu.top, 7); // one value (the 1.0) still pushed
 }
 
 #[test]
