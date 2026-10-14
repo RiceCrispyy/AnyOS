@@ -2,7 +2,8 @@
 //!
 //! * `anyos inspect <file>` reads a program (Windows PE in full detail; Linux ELF
 //!   and macOS Mach-O in summary) and reports what it is and what AnyOS would need
-//!   to run it. Nothing is executed.
+//!   to run it. Installers and app packages (NSIS, Inno Setup, MSI, .deb, .pkg,
+//!   ...) are recognised too. Nothing is executed.
 //! * `anyos load <file>` goes one step further: it maps the image (and application
 //!   DLLs beside it) into an emulated guest address space, relocates and binds it,
 //!   and prints the resulting process layout. Still nothing is executed.
@@ -20,6 +21,7 @@ use anyos_exec::{run as exec_run, RunOptions};
 use anyos_format::{Detected, GuestMode, ProgramSummary};
 use anyos_loader::{BasePolicy, Binding, LoadOptions, Process};
 use anyos_net::{profile_path, AppProfile, NetPolicy};
+use anyos_package::{InstallRoute, Package};
 use anyos_pe::catalog::classify;
 use anyos_pe::report::{
     self, CompatibilityReport, DependencyLocation, HostArch, HostOs, HostPlatform, Status,
@@ -350,13 +352,22 @@ fn redirects_json(policy: &NetPolicy) -> serde_json::Value {
 
 fn inspect(a: InspectArgs) -> Result<(), String> {
     let bytes = std::fs::read(&a.file).map_err(|e| format!("{}: {e}", a.file.display()))?;
-    let detected =
-        anyos_format::detect(&bytes).map_err(|e| format!("{}: {e}", a.file.display()))?;
+    let detected = match anyos_format::detect(&bytes) {
+        Ok(d) => d,
+        Err(e) => match anyos_package::identify(&bytes, None) {
+            Some(package) => return inspect_package(&a, bytes.len(), &package),
+            None => return Err(format!("{}: {e}", a.file.display())),
+        },
+    };
     let policy = load_policy(&a.file)?;
     let image = match detected {
         Detected::Pe(image) => *image,
-        Detected::Other(summary) => return inspect_other(&a, bytes.len(), &summary, &policy),
+        Detected::Other(summary) => {
+            let package = anyos_package::identify(&bytes, None);
+            return inspect_other(&a, bytes.len(), &summary, package.as_ref(), &policy);
+        }
     };
+    let package = anyos_package::identify(&bytes, Some(&image));
     let report = report::build(&image, host_platform(&a), &beside(&a.file));
 
     if a.json {
@@ -368,6 +379,7 @@ fn inspect(a: InspectArgs) -> Result<(), String> {
             "file": a.file.display().to_string(),
             "image": img,
             "report": report,
+            "package": package,
             "redirects": redirects_json(&policy),
         });
         println!(
@@ -394,16 +406,60 @@ fn inspect(a: InspectArgs) -> Result<(), String> {
         }
     }
     print_report(&report);
+    if let Some(p) = &package {
+        print_package(p);
+    }
     if !policy.is_empty() {
         print_redirects(&a.file, &policy);
     }
     Ok(())
 }
 
+fn inspect_package(a: &InspectArgs, size: usize, p: &Package) -> Result<(), String> {
+    if a.json {
+        let out = serde_json::json!({
+            "file": a.file.display().to_string(),
+            "package": p,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    println!("AnyOS executable inspector");
+    println!("  File:            {} ({size} bytes)", file_name(&a.file));
+    print_package(p);
+    Ok(())
+}
+
+fn print_package(p: &Package) {
+    println!("\nInstaller");
+    println!(
+        "  Kind:            {} (installs {} software)",
+        p.kind.display_name(),
+        p.kind.os().display_name()
+    );
+    if let Some(off) = p.payload_offset {
+        println!("  Payload at:      0x{off:x}");
+    }
+    let route = match p.kind.route() {
+        InstallRoute::Extract => "unpack the payload directly (no guest code runs)",
+        InstallRoute::RunInstaller => "run the installer as a guest program",
+    };
+    println!("  AnyOS route:     {route}");
+    let silent = p.kind.silent_args();
+    if !silent.is_empty() {
+        println!("  Silent install:  {}", silent.join(" "));
+    }
+    println!("  `anyos install` is not built yet; this only identifies the package.");
+}
+
 fn inspect_other(
     a: &InspectArgs,
     size: usize,
     p: &ProgramSummary,
+    package: Option<&Package>,
     policy: &NetPolicy,
 ) -> Result<(), String> {
     let plan = anyos_format::plan(p, host_platform(a));
@@ -412,6 +468,7 @@ fn inspect_other(
             "file": a.file.display().to_string(),
             "program": p,
             "plan": plan,
+            "package": package,
             "redirects": redirects_json(policy),
         });
         println!(
@@ -475,6 +532,9 @@ fn inspect_other(
     println!("  {}", plan.note);
     if let Some(layer) = plan.personality {
         println!("  OS layer needed: {layer}");
+    }
+    if let Some(pkg) = package {
+        print_package(pkg);
     }
     if !policy.is_empty() {
         print_redirects(&a.file, policy);
