@@ -5,6 +5,8 @@
 //! stage. Every HWND, HDC, HFONT, HBRUSH etc. is a fake handle allocated
 //! from a monotonic counter.
 
+#![allow(dead_code)]
+
 use crate::api::*;
 use crate::thread::{Halt, Thread};
 
@@ -73,6 +75,7 @@ impl UiState {
         h
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_window(
         &mut self,
         class: String,
