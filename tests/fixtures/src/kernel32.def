@@ -3,3 +3,9 @@ EXPORTS
   GetStdHandle@4
   WriteFile@20
   ExitProcess@4
+  GetLastError@0
+  GetModuleHandleA@4
+  GetModuleFileNameA@12
+  LoadLibraryA@4
+  FreeLibrary@4
+  GetProcAddress@8

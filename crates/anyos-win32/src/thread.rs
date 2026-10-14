@@ -1,11 +1,14 @@
 //! The main thread: start-up structures, guest calls and call-gate dispatch.
 
+use std::path::PathBuf;
+
 use anyos_backend::{x86_reg, ExecutionBackend, GuestContext, StopReason, X86Context};
 use anyos_loader::Process;
 use anyos_memory::{round_up, MemoryError, Protection, ALLOCATION_GRANULARITY};
 use anyos_pe::{ImportName, Machine};
 
 use crate::api::{self, Api};
+use crate::module::SystemModule;
 use crate::{RunError, RunOptions, Stdio};
 
 const DLL_PROCESS_ATTACH: u64 = 1;
@@ -87,6 +90,14 @@ pub(crate) struct Thread<'a, 'b> {
     pub cmdline_a: u64,
     pub cmdline_w: u64,
     layout: &'static Layout,
+    /// How many API implementations are running; a guest call made from one
+    /// (a DllMain run by LoadLibrary) must not reuse the stack from the top.
+    api_depth: u32,
+    /// Where LoadLibrary looks for application DLLs.
+    pub search_dirs: Vec<PathBuf>,
+    /// Handles given out for system DLLs, which AnyOS provides itself.
+    pub system_modules: Vec<SystemModule>,
+    pub error_mode: u32,
 }
 
 impl<'a, 'b> Thread<'a, 'b> {
@@ -182,6 +193,21 @@ impl<'a, 'b> Thread<'a, 'b> {
             },
         )?;
 
+        let mut search_dirs: Vec<PathBuf> = process.modules[0]
+            .path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(|d| {
+                if d.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    d.to_path_buf()
+                }
+            })
+            .into_iter()
+            .collect();
+        search_dirs.extend(opts.search_dirs.iter().cloned());
+
         let mut ctx = X86Context::new(long);
         if long {
             ctx.gs_base = teb;
@@ -203,6 +229,10 @@ impl<'a, 'b> Thread<'a, 'b> {
             cmdline_a: params,
             cmdline_w: params + wide_off,
             layout,
+            api_depth: 0,
+            search_dirs,
+            system_modules: Vec::new(),
+            error_mode: 0,
         })
     }
 
@@ -227,14 +257,9 @@ impl<'a, 'b> Thread<'a, 'b> {
         // Dependencies were appended after the modules that import them, so
         // initialise in reverse order: deepest dependency first.
         for i in (1..self.process.modules.len()).rev() {
-            let m = &self.process.modules[i];
-            let (base, name, entry) = (m.base, m.name.clone(), m.entry_point);
-            self.run_tls_callbacks(i)?;
-            if let Some(entry) = entry {
-                let ok = self.call(entry, &[base, DLL_PROCESS_ATTACH, 0])?;
-                if ok & 0xFFFF_FFFF == 0 {
-                    return Err(RunError::DllInitFailed { module: name }.into());
-                }
+            if !self.init_dll(i)? {
+                let module = self.process.modules[i].name.clone();
+                return Err(RunError::DllInitFailed { module }.into());
             }
         }
         self.run_tls_callbacks(0)?;
@@ -245,6 +270,19 @@ impl<'a, 'b> Thread<'a, 'b> {
         // process, with the returned value as the exit code.
         let ret = self.call(entry, &[])?;
         Ok(ret as u32)
+    }
+
+    /// Run a DLL's TLS callbacks and entry point for `DLL_PROCESS_ATTACH`.
+    /// Returns what the entry point returned (TRUE when it has none).
+    pub fn init_dll(&mut self, module: usize) -> Result<bool, Halt> {
+        let m = &self.process.modules[module];
+        let (base, entry) = (m.base, m.entry_point);
+        self.run_tls_callbacks(module)?;
+        let Some(entry) = entry else {
+            return Ok(true);
+        };
+        let ok = self.call(entry, &[base, DLL_PROCESS_ATTACH, 0])?;
+        Ok(ok & 0xFFFF_FFFF != 0)
     }
 
     fn run_tls_callbacks(&mut self, module: usize) -> Result<(), Halt> {
@@ -263,7 +301,24 @@ impl<'a, 'b> Thread<'a, 'b> {
 
     /// Call guest code at `target` with the platform calling convention
     /// (Microsoft x64, or stdcall on x86) and run until it returns.
+    ///
+    /// From inside an API implementation the guest is paused mid-call, so the
+    /// new frame goes below its stack pointer and its registers are restored
+    /// afterwards.
     pub fn call(&mut self, target: u64, args: &[u64]) -> Result<u64, Halt> {
+        if self.api_depth == 0 {
+            return self.call_from(target, args);
+        }
+        let saved = self.ctx.clone();
+        let saved_top = self.stack_top;
+        self.stack_top = saved.regs[x86_reg::RSP].saturating_sub(0x100);
+        let result = self.call_from(target, args);
+        self.stack_top = saved_top;
+        self.ctx = saved;
+        result
+    }
+
+    fn call_from(&mut self, target: u64, args: &[u64]) -> Result<u64, Halt> {
         let p = self.ptr_size();
         let mem = &mut self.process.memory;
         let mut sp = self.stack_top & !0xF;
@@ -350,7 +405,9 @@ impl<'a, 'b> Thread<'a, 'b> {
         let args: Vec<u64> = (0..api.args)
             .map(|n| self.arg(n))
             .collect::<Result<_, _>>()?;
+        self.api_depth += 1;
         let result = (api.f)(self, &args);
+        self.api_depth -= 1;
         if self.trace {
             let shown: Vec<String> = args.iter().map(|a| format!("{a:#x}")).collect();
             let outcome = match &result {
@@ -405,6 +462,13 @@ impl<'a, 'b> Thread<'a, 'b> {
         self.ctx.regs[x86_reg::RSP] = new_sp;
         self.ctx.rip = ret_addr;
         Ok(())
+    }
+
+    /// With `--trace`, explain something the API results alone do not show.
+    pub fn trace_note(&mut self, note: &str) {
+        if self.trace {
+            let _ = writeln!(self.stdio.stderr, "[anyos] {note}");
+        }
     }
 
     pub fn last_error(&self) -> u32 {
