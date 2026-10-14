@@ -62,7 +62,7 @@ jobs:
       - name: Build the launcher with SwiftPM
         run: |
           cd anyos/Launcher
-         swift build -c release
+          swift build -c release
           cp .build/release/AnyOSLauncher build/AnyOSLauncher.app/Contents/MacOS/
 
       - name: Run the launcher helper (smoke test)
