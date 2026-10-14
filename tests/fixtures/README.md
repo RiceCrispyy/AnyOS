@@ -10,6 +10,7 @@
 | `hello_gui.exe` | GUI subsystem, delay-loaded `user32.dll` |
 | `exports_dll.dll` | DLL entry point, named exports, a NONAME ordinal export (`@7`), a data export, ordinal base 7 |
 | `uses_dll.exe` | imports from `exports_dll.dll` by name and by ordinal |
+| `dynload.exe` | run-time linking: `LoadLibraryA` of `exports_dll.dll`, `GetProcAddress` by name and ordinal, `GetModuleHandleA`, `GetModuleFileNameA`, `FreeLibrary`; exit code `0x7FF` when every check passes |
 | `selftest.exe` (x64, x86) | interpreter self-test; `selftest.expected` is the same code's output on a real CPU. Built by `src/build-selftest.sh`. |
 
 `bin/other/` holds the same tiny C program (`src/hello_unix.c`) built for other

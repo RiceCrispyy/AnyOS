@@ -27,7 +27,7 @@ for t in "${TARGETS[@]}"; do
       llvm-dlltool -m "$dlm" -d "$WORK/$lib-$arch.def" -l "$WORK/$lib-$arch.lib"
     fi
   done
-  for src in hello_console hello_gui exports_dll uses_dll; do
+  for src in hello_console hello_gui exports_dll uses_dll dynload; do
     clang --target="$triple" $CFLAGS -c "$src.c" -o "$WORK/$src-$arch.obj"
   done
   out="$OUT/$arch"
@@ -43,5 +43,7 @@ for t in "${TARGETS[@]}"; do
     "$WORK/exports_dll-$arch.obj" /out:"$out/exports_dll.dll" /implib:"$WORK/exports_dll-$arch.lib"
   lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
     "$WORK/uses_dll-$arch.obj" "$WORK/exports_dll-$arch.lib" "$WORK/kernel32-$arch.lib" /out:"$out/uses_dll.exe"
+  lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
+    "$WORK/dynload-$arch.obj" "$WORK/kernel32-$arch.lib" /out:"$out/dynload.exe"
 done
 ls -lR "$OUT"
