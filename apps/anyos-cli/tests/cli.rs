@@ -277,3 +277,15 @@ fn crc32(data: &[u8]) -> u32 {
     }
     !crc
 }
+
+#[test]
+fn update_command_and_global_opt_out_flag_exist() {
+    let o = anyos(&["update", "--help"]);
+    assert!(o.status.success());
+    assert!(stdout(&o).contains("--check"));
+    // Accepted on any command, before or after it.
+    let o = anyos(&["--no-update-check", "env", "--help"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = anyos(&["env", "--no-update-check", "--help"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+}

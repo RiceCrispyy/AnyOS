@@ -1,11 +1,16 @@
 //! AnyOS desktop app: pick or drop a program, see what it is and how AnyOS
 //! would run it on this computer, then run it and watch its output.
+//!
+//! Release builds look for a newer AnyOS on start (skip with
+//! `--no-update-check` or `ANYOS_NO_UPDATE_CHECK=1`) and offer to update and
+//! restart; "Check for updates" in the header asks any time.
 
 // No console window behind the app on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod analysis;
 mod runner;
+mod updater;
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +18,7 @@ use analysis::{Action, Analysis, Tone};
 use anyos_pe::report::HostPlatform;
 use eframe::egui::{self, Color32, RichText};
 use runner::{Event, Job};
+use updater::Updater;
 
 /// Output lines kept in the log; older ones are dropped.
 const MAX_LOG_LINES: usize = 10_000;
@@ -26,7 +32,16 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    let start = std::env::args_os().nth(1).map(PathBuf::from);
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let no_update_check = args.len() != {
+        args.retain(|a| a != "--no-update-check");
+        args.len()
+    };
+    let auto_check = !no_update_check && anyos_update::auto_check_enabled();
+    if let Ok(layout) = anyos_update::Layout::current() {
+        anyos_update::cleanup_leftovers(&layout);
+    }
+    let start = args.into_iter().next().map(PathBuf::from);
     eframe::run_native(
         "AnyOS",
         options,
@@ -36,6 +51,10 @@ fn main() -> eframe::Result {
                 s.spacing.button_padding = egui::vec2(12.0, 6.0);
             });
             let mut app = AnyosApp::new();
+            if auto_check {
+                let ctx = cc.egui_ctx.clone();
+                app.updater.check(false, move || ctx.request_repaint());
+            }
             if let Some(p) = start {
                 app.open(&p);
             }
@@ -59,6 +78,7 @@ struct AnyosApp {
     trace: bool,
     job: Option<Job>,
     log: Vec<(Stream, String)>,
+    updater: Updater,
 }
 
 impl AnyosApp {
@@ -71,6 +91,7 @@ impl AnyosApp {
             trace: false,
             job: None,
             log: Vec::new(),
+            updater: Updater::new(),
         }
     }
 
@@ -141,6 +162,17 @@ impl eframe::App for AnyosApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.drain();
+        if let Some(installed) = self.updater.poll() {
+            match updater::relaunch(&installed) {
+                Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Err(e) => {
+                    self.updater.state = updater::State::Failed(format!(
+                        "Updated to AnyOS {}, but could not restart it ({e}). Open AnyOS again to use the new version.",
+                        installed.version
+                    ))
+                }
+            }
+        }
 
         let dropped: Option<PathBuf> =
             ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
@@ -162,8 +194,18 @@ impl eframe::App for AnyosApp {
                     {
                         self.pick_file();
                     }
+                    let checking = self.updater.busy();
+                    if ui
+                        .add_enabled(!checking && !busy, egui::Button::new("Check for updates"))
+                        .on_hover_text(format!("This is AnyOS {}", anyos_update::current_version()))
+                        .clicked()
+                    {
+                        let c = ctx.clone();
+                        self.updater.check(true, move || c.request_repaint());
+                    }
                 });
             });
+            self.update_bar(ui);
             ui.add_space(4.0);
         });
 
@@ -195,6 +237,75 @@ impl eframe::App for AnyosApp {
 }
 
 impl AnyosApp {
+    /// The line under the header about updates, when there is something to say.
+    fn update_bar(&mut self, ui: &mut egui::Ui) {
+        use updater::State;
+        let busy = self.job.is_some();
+        let ctx = ui.ctx().clone();
+        match &self.updater.state {
+            State::Idle | State::Checking { manual: false } => {}
+            State::Checking { manual: true } => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Checking for updates…");
+                });
+            }
+            State::UpToDate => {
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "AnyOS {} is the latest version.",
+                        anyos_update::current_version()
+                    ));
+                    if ui.small_button("OK").clicked() {
+                        self.updater.dismiss();
+                    }
+                });
+            }
+            State::Available(u) => {
+                let text = format!(
+                    "AnyOS {} is available (this is {}).",
+                    u.version,
+                    anyos_update::current_version()
+                );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(text).strong());
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Update and restart"))
+                        .on_disabled_hover_text("Stop the running program first.")
+                        .clicked()
+                    {
+                        self.updater.install(move || ctx.request_repaint());
+                    }
+                    if ui.button("Later").clicked() {
+                        self.updater.dismiss();
+                    }
+                });
+            }
+            State::Downloading {
+                version,
+                done,
+                total,
+            } => {
+                let label = format!("Downloading AnyOS {version}…");
+                let bar = match total {
+                    Some(t) if *t > 0 => egui::ProgressBar::new(*done as f32 / *t as f32)
+                        .text(format!("{label} {}", human_size(*done))),
+                    _ => egui::ProgressBar::new(0.0).animate(true).text(label),
+                };
+                ui.add(bar.desired_width(ui.available_width()));
+            }
+            State::Failed(e) => {
+                let e = format!("Update failed: {e}");
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(ui.visuals().error_fg_color, e);
+                    if ui.small_button("OK").clicked() {
+                        self.updater.dismiss();
+                    }
+                });
+            }
+        }
+    }
+
     fn program_view(&mut self, ui: &mut egui::Ui) {
         let Some(Ok(a)) = &self.analysis else { return };
         let a = a.clone();

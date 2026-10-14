@@ -15,5 +15,6 @@ path = "src/main.rs"
 anyos-pe.workspace = true
 anyos-format.workspace = true
 anyos-package.workspace = true
+anyos-update.workspace = true
 eframe.workspace = true
 rfd.workspace = true
