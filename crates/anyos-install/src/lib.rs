@@ -6,8 +6,8 @@
 //! records shortcuts. Installer logic that only code could do (MSI custom
 //! actions, scripts) is skipped and listed in the app's notes.
 //!
-//! Supported now: Windows Installer packages (`.msi`), ZIP and 7-Zip archives,
-//! and ZIP or 7-Zip self-extracting `.exe` files. Other installers are
+//! Supported now: Windows Installer packages (`.msi`), NSIS installers, ZIP
+//! and 7-Zip archives, and ZIP or 7-Zip self-extracting `.exe` files. Other installers are
 //! recognised (see `anyos-package`) and refused with the reason.
 //!
 //! Every file is placed through `Env::host_path`, so a hostile package cannot
@@ -15,6 +15,7 @@
 
 mod archive;
 mod msi;
+mod nsis;
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -178,8 +179,15 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         .unwrap_or_else(|| "App".into());
 
     let payload = &bytes[package.payload_offset.unwrap_or(0) as usize..];
+    let mut w = Writer::new(env);
+    let mut nsis = None;
     let product = match package.kind {
         PackageKind::Msi => msi::product(&bytes)?,
+        PackageKind::Nsis => {
+            let offset = package.payload_offset.unwrap_or(0) as usize;
+            let n = nsis.insert(nsis::Nsis::parse(&bytes, offset, &w)?);
+            n.product(&stem)
+        }
         PackageKind::Zip | PackageKind::ZipSfx => archive::zip_product(payload, &stem)?,
         PackageKind::SevenZip | PackageKind::SevenZipSfx => {
             archive::sevenz_product(payload, &stem)?
@@ -192,10 +200,12 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         return Err(InstallError::AlreadyInstalled(product.name));
     }
 
-    let mut w = Writer::new(env);
-    let result = match package.kind {
-        PackageKind::Msi => msi::install(&mut w, path, &bytes, &product),
-        PackageKind::Zip | PackageKind::ZipSfx => archive::install_zip(&mut w, payload, &product),
+    let result = match (package.kind, nsis.as_mut()) {
+        (PackageKind::Msi, _) => msi::install(&mut w, path, &bytes, &product),
+        (_, Some(n)) => n.install(&mut w, &product),
+        (PackageKind::Zip | PackageKind::ZipSfx, _) => {
+            archive::install_zip(&mut w, payload, &product)
+        }
         _ => archive::install_7z(&mut w, payload, &product),
     };
     let installed = match result {
@@ -308,9 +318,7 @@ pub fn uninstall(env: &Env, id_or_name: &str) -> Result<UninstallReport, Install
 
 fn unsupported(kind: PackageKind) -> InstallError {
     let reason = match kind {
-        PackageKind::Nsis | PackageKind::InnoSetup => {
-            "unpacking this installer format is planned next (see issue #5)"
-        }
+        PackageKind::InnoSetup => "unpacking this installer format is planned next (see issue #5)",
         PackageKind::WixBurn | PackageKind::InstallShield => {
             "this installer has to run as a program, which needs Windows program support"
         }

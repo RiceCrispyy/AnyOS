@@ -509,3 +509,146 @@ fn unsupported_and_unknown_files_are_refused() {
     ));
     assert!(env.apps().unwrap().apps.is_empty());
 }
+
+#[test]
+fn nsis_installs_files_registry_and_shortcuts() {
+    let scratch = Scratch::new("nsis");
+    let env = scratch.env();
+
+    // Build a minimal NSIS installer: real PE stub + NSIS header + data.
+    // Format: non-solid stored (no compression; simpler to construct).
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/bin/x64/hello_console.exe");
+    let mut exe = std::fs::read(fixture).unwrap();
+
+    // String table (ANSI3 format, plain NUL-terminated strings at these offsets).
+    const STR_EMPTY: u32 = 0; // ""
+    const STR_INSTDIR: u32 = 1; // "C:\Program Files\TestApp"
+    const STR_TOOL: u32 = 26; // "tool.exe"
+    const STR_REG_KEY: u32 = 35; // "Software\...\Uninstall\TestApp"
+    const STR_DISP_NAME: u32 = 95; // "DisplayName"
+    const STR_APP_NAME: u32 = 107; // "TestApp"
+    const STR_SHORTCUT: u32 = 115; // "C:\ProgramData\...\TestApp.lnk"
+    const STR_TARGET: u32 = 180; // "C:\Program Files\TestApp\tool.exe"
+
+    let mut strings = Vec::<u8>::new();
+    for s in [
+        &b""[..],
+        b"C:\\Program Files\\TestApp",
+        b"tool.exe",
+        b"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\TestApp",
+        b"DisplayName",
+        b"TestApp",
+        b"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\TestApp.lnk",
+        b"C:\\Program Files\\TestApp\\tool.exe",
+    ] {
+        strings.extend_from_slice(s);
+        strings.push(0);
+    }
+    // Verify offset assumptions so test failures are obvious.
+    assert_eq!(STR_INSTDIR as usize, 1);
+    assert_eq!(STR_TOOL as usize, 1 + b"C:\\Program Files\\TestApp\0".len());
+    assert_eq!(STR_TARGET as usize, 180, "string table offset mismatch");
+
+    // Entries: 5 × [opcode, p0..p5] × 4 bytes each = 5 × 28 bytes.
+    let mut entries = Vec::<u8>::new();
+    let push_entry = |buf: &mut Vec<u8>, vals: [i32; 7]| {
+        for v in vals {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    };
+    push_entry(&mut entries, [25, 21, STR_INSTDIR as i32, 0, 0, 0, 0]); // AssignVar $INSTDIR
+    push_entry(&mut entries, [11, STR_INSTDIR as i32, 1, 0, 0, 0, 0]); // SetOutPath
+    push_entry(&mut entries, [20, 0, STR_TOOL as i32, 0, 0, 0, 0]); // ExtractFile
+    push_entry(
+        &mut entries,
+        [
+            51,
+            0x80000002_u32 as i32, // HKLM
+            STR_REG_KEY as i32,
+            STR_DISP_NAME as i32,
+            STR_APP_NAME as i32,
+            1, // type = Sz
+            0,
+        ],
+    ); // WriteRegStr
+    push_entry(
+        &mut entries,
+        [
+            45,
+            STR_SHORTCUT as i32,
+            STR_TARGET as i32,
+            STR_EMPTY as i32,
+            0,
+            0,
+            0,
+        ],
+    ); // CreateShortcut
+
+    // NSIS header: u32 flags, 8 blocks × (offset u32, num u32), strings, entries.
+    let strings_off = 4_u32 + 8 * 8; // = 68
+    let entries_off = strings_off + strings.len() as u32;
+
+    let mut header = Vec::<u8>::new();
+    header.extend_from_slice(&0u32.to_le_bytes()); // flags
+    for i in 0..8u32 {
+        let (off, num) = match i {
+            2 => (entries_off, entries.len() as u32 / 28),
+            3 => (strings_off, 0u32),
+            _ => (0u32, 0u32),
+        };
+        header.extend_from_slice(&off.to_le_bytes());
+        header.extend_from_slice(&num.to_le_bytes());
+    }
+    header.extend_from_slice(&strings);
+    header.extend_from_slice(&entries);
+    let header_len = header.len() as u32;
+
+    // Data area: one stored block (b"MZ tool") at offset 0.
+    let file_data = b"MZ tool";
+    let mut data = Vec::<u8>::new();
+    data.extend_from_slice(&(file_data.len() as u32).to_le_bytes()); // stored
+    data.extend_from_slice(file_data);
+
+    // Body: non-solid stored header size word + header + data blocks.
+    let mut body = Vec::<u8>::new();
+    body.extend_from_slice(&header_len.to_le_bytes()); // no high bit = stored
+    body.extend_from_slice(&header);
+    body.extend_from_slice(&data);
+
+    // NSIS first header (28 bytes): flags, magic, header_len, total_len.
+    let total_len = 28u32 + body.len() as u32;
+    let mut first_header = Vec::<u8>::new();
+    first_header.extend_from_slice(&0u32.to_le_bytes()); // flags
+    first_header.extend_from_slice(b"\xEF\xBE\xAD\xDENullsoftInst");
+    first_header.extend_from_slice(&header_len.to_le_bytes());
+    first_header.extend_from_slice(&total_len.to_le_bytes());
+    assert_eq!(first_header.len(), 28);
+
+    exe.extend_from_slice(&first_header);
+    exe.extend_from_slice(&body);
+
+    let installer = scratch.file("TestApp-setup.exe", &exe);
+    let r = install(&env, &installer).unwrap();
+
+    assert_eq!(r.app.name, "TestApp");
+    assert_eq!(r.app.package, "NSIS installer");
+    assert_eq!(
+        r.app.main.as_deref(),
+        Some(r"C:\Program Files\TestApp\tool.exe")
+    );
+    assert_eq!(read(&env, r"C:\Program Files\TestApp\tool.exe"), b"MZ tool");
+    assert!(!r.app.shortcuts.is_empty(), "expected shortcut");
+    assert!(
+        r.app
+            .registry_values
+            .iter()
+            .any(|[k, n]| { k.to_ascii_lowercase().contains("uninstall") && n == "DisplayName" }),
+        "expected DisplayName registry entry"
+    );
+
+    uninstall(&env, "TestApp").unwrap();
+    assert!(env.apps().unwrap().apps.is_empty(), "app not removed");
+    let host = env.host_path(r"C:\Program Files\TestApp\tool.exe").unwrap();
+    assert!(!host.exists(), "file not removed on uninstall");
+}

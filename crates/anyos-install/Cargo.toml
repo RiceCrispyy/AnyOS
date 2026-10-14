@@ -1,6 +1,6 @@
 [package]
 name = "anyos-install"
-description = "Installs apps from installers (MSI, ZIP and 7-Zip) into an AnyOS environment without running installer code."
+description = "Installs apps from installers (MSI, NSIS, ZIP and 7-Zip) into an AnyOS environment without running installer code."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,8 @@ msi.workspace = true
 cab.workspace = true
 zip.workspace = true
 sevenz-rust2.workspace = true
+flate2.workspace = true
+lzma-rust2.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

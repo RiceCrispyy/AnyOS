@@ -128,6 +128,8 @@ dependencies = [
  "anyos-package",
  "anyos-pe",
  "cab",
+ "flate2",
+ "lzma-rust2 0.22.0",
  "msi",
  "serde",
  "sevenz-rust2",

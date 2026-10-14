@@ -673,6 +673,7 @@ fn print_package(p: &Package) {
     if !matches!(
         p.kind,
         PackageKind::Msi
+            | PackageKind::Nsis
             | PackageKind::Zip
             | PackageKind::ZipSfx
             | PackageKind::SevenZip
