@@ -141,7 +141,7 @@ fn analyse_pe(a: &mut Analysis, image: &PeImage, package: Option<&Package>, host
     };
     a.plan = format!(
         "{cpu}. Today AnyOS runs Windows programs on its portable interpreter, \
-         with a small set of Windows API calls; it stops with a clear message at the first one it lacks."
+         with most of kernel32 (console programs, no windows yet); it stops with a clear message at the first API it lacks."
     );
 
     let blocked = if image.is_dll {

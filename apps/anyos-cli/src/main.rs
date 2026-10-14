@@ -503,7 +503,9 @@ fn install_app(a: InstallArgs) -> Result<(), String> {
             println!("  - {n}");
         }
     }
-    println!("\nAnyOS cannot start Windows programs yet; the app is ready for when it can.");
+    if let Some(main) = app.main.as_deref().and_then(|m| env.host_path(m).ok()) {
+        println!("\nRun it with: anyos run \"{}\"", main.display());
+    }
     Ok(())
 }
 
