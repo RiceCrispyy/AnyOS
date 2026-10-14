@@ -820,7 +820,7 @@ pub(crate) fn random_bytes(n: usize) -> Vec<u8> {
     buf
 }
 
-fn gen_random(t: &mut Thread<'_, '_>, buf: u64, len: u64) -> bool {
+pub(crate) fn gen_random(t: &mut Thread<'_, '_>, buf: u64, len: u64) -> bool {
     let len = len.min(1 << 20) as usize;
     let data = random_bytes(len);
     write_bytes(t, buf, &data)
