@@ -198,10 +198,10 @@ fn register_class(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, 
     // cbWndExtra(4) hInstance(ptr) ... lpszClassName(ptr)
     let base = a[0];
     let p = t.ptr_size() as u64;
-    let wnd_proc = read_ptr(t, base + 4 + p - p + 4).unwrap_or(0); // offset 8 on x86
-                                                                   // On x86: cbSize(4), style(4), wndProc(4) = offset 8
-                                                                   // On x64: cbSize(4), style(4), pad(4?), wndProc(8) = offset 8 or 16
-    let wnd_proc = if t.long_mode() {
+    let _wnd_proc = read_ptr(t, base + 4 + p - p + 4).unwrap_or(0); // offset 8 on x86
+                                                                    // On x86: cbSize(4), style(4), wndProc(4) = offset 8
+                                                                    // On x64: cbSize(4), style(4), pad(4?), wndProc(8) = offset 8 or 16
+    let _wnd_proc = if t.long_mode() {
         read_u64(t, base + 16).unwrap_or(0) // cbSize(4)+style(4)+pad(8) = 16? No
     } else {
         read_u32(t, base + 8).map(u64::from).unwrap_or(0)
@@ -419,7 +419,7 @@ fn peek_get_message(
     }
 }
 
-fn dispatch_message(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+fn dispatch_message(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     // We don't actually call back into guest WndProcs to avoid re-entrant
     // complexity. Any guest that inspects message loop return values gets 0.
     let _ = a;
@@ -431,7 +431,7 @@ fn send_message(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, H
     // Handle the messages we can answer without a real WndProc.
     match msg {
         WM_GETTEXT => {
-            let buf = wp as u64;
+            let buf = wp;
             let cch = lp as u32;
             let title =
                 t.k.ui
@@ -490,7 +490,7 @@ fn message_box(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
     Ok(1)
 }
 
-fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, Halt> {
     // Create a fake dialog window, call initproc, run the message loop until
     // EndDialog is called.
     let (_hinstance, _template, parent, dlg_proc, init_param) = (a[0], a[1], a[2], a[3], a[4]);
@@ -526,7 +526,7 @@ fn end_dialog(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 }
 
 fn get_dlg_item(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let (hwnd, id) = (a[0], a[1] as u64);
+    let (hwnd, id) = (a[0], a[1]);
     let found =
         t.k.ui
             .windows
@@ -538,7 +538,7 @@ fn get_dlg_item(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 }
 
 fn set_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let (hwnd, id, ptr) = (a[0], a[1] as u64, a[2]);
+    let (hwnd, id, ptr) = (a[0], a[1], a[2]);
     let text = read_str(t, ptr, wide).unwrap_or_default();
     let child_hwnd =
         t.k.ui
@@ -555,7 +555,7 @@ fn set_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u6
 }
 
 fn get_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let (hwnd, id, buf, cch) = (a[0], a[1] as u64, a[2], a[3] as u32);
+    let (hwnd, id, buf, cch) = (a[0], a[1], a[2], a[3] as u32);
     let child_hwnd =
         t.k.ui
             .windows
@@ -918,8 +918,8 @@ fn find_window(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
     for w in &t.k.ui.windows {
         let class_match = class
             .as_ref()
-            .map_or(true, |c| w.class.eq_ignore_ascii_case(c));
-        let title_match = title.as_ref().map_or(true, |t| w.title == *t);
+            .is_none_or(|c| w.class.eq_ignore_ascii_case(c));
+        let title_match = title.as_ref().is_none_or(|t| w.title == *t);
         if class_match && title_match {
             return Ok(w.hwnd);
         }
@@ -951,7 +951,7 @@ fn call_window_proc(_t: &mut Thread<'_, '_>, _a: &[u64], _wide: bool) -> Result<
 }
 
 fn send_dlg_item_message(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, Halt> {
-    let (hwnd, id, msg, wp, lp) = (a[0], a[1] as u64, a[2] as u32, a[3], a[4]);
+    let (hwnd, id, msg, wp, lp) = (a[0], a[1], a[2] as u32, a[3], a[4]);
     let child_hwnd =
         t.k.ui
             .windows
@@ -963,7 +963,7 @@ fn send_dlg_item_message(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Resu
 }
 
 fn check_dlg_button(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let (hwnd, id, check) = (a[0], a[1] as u64, a[2]);
+    let (hwnd, id, check) = (a[0], a[1], a[2]);
     let child_hwnd =
         t.k.ui
             .windows
@@ -979,7 +979,7 @@ fn check_dlg_button(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 }
 
 fn is_dlg_button_checked(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let (hwnd, id) = (a[0], a[1] as u64);
+    let (hwnd, id) = (a[0], a[1]);
     let child_hwnd =
         t.k.ui
             .windows
@@ -1654,7 +1654,7 @@ pub(crate) static APIS: &[Api] = &[
     u32api("SetCursor", 1, set_cursor),
     u32api("DestroyCursor", 1, |_, _| Ok(1)),
     u32api("DestroyIcon", 1, |_, _| Ok(1)),
-    u32api("CopyIcon", 1, |t, a| Ok(t.k.ui.next_gdi())),
+    u32api("CopyIcon", 1, |t, _a| Ok(t.k.ui.next_gdi())),
     u32api("LoadAcceleratorsA", 2, load_accelerators),
     u32api("LoadAcceleratorsW", 2, load_accelerators),
     u32api("TranslateAcceleratorA", 3, translate_accelerator),
@@ -1663,7 +1663,7 @@ pub(crate) static APIS: &[Api] = &[
     u32api("SetTimer", 4, set_timer),
     u32api("KillTimer", 2, kill_timer),
     // --- user32: menu stubs ---
-    u32api("GetMenu", 1, |t, a| Ok(t.k.ui.next_gdi())),
+    u32api("GetMenu", 1, |t, _a| Ok(t.k.ui.next_gdi())),
     u32api("SetMenu", 2, |_, _| Ok(1)),
     u32api("CreateMenu", 0, |t, _| Ok(t.k.ui.next_gdi())),
     u32api("CreatePopupMenu", 0, |t, _| Ok(t.k.ui.next_gdi())),
