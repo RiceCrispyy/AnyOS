@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 **Added**
 
+- `anyos run app.exe` — run Windows x86 and x64 console programs on a portable
+  interpreter (`anyos-interp`) on any host, including Apple Silicon Macs. Windows
+  API calls go through the call gate to Rust implementations (`anyos-win32`);
+  the first are `ExitProcess`, `GetStdHandle`, `WriteFile`, `WriteConsoleA/W`,
+  `GetLastError`/`SetLastError`, `GetCommandLineA/W`, `GetModuleHandleA/W` and
+  the current process/thread queries. DLL entry points and TLS callbacks run
+  before the program. `--trace` logs every API call. Unsupported APIs and
+  instructions stop the run with a message naming them.
+- `anyos-backend` — the `ExecutionBackend` trait shared by all execution backends.
+
 - Standalone Rust runtime that can inspect and load Windows PE programs into an
   emulated guest process: map, relocate, bind imports, set up TLS, page protections,
   and an API call gate. ([README](README.md) "Quick start" and "Layout".)

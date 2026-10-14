@@ -7,9 +7,10 @@
 //! * `anyos load <file>` goes one step further: it maps the image (and application
 //!   DLLs beside it) into an emulated guest address space, relocates and binds it,
 //!   and prints the resulting process layout. Still nothing is executed.
-//! * `anyos run <file>` runs a Linux x86-64 ELF on the current host.
-//!   On Windows x64 the guest code runs natively with AnyOS intercepting Linux
-//!   syscalls. On Linux the ELF is run directly (useful for testing).
+//! * `anyos run <file>` runs a program. Windows x86 and x64 `.exe` files run on
+//!   AnyOS's portable interpreter on any host, with Windows API calls served
+//!   through the call gate. A Linux x86-64 ELF runs on an x86-64 host: natively
+//!   with Linux syscalls intercepted on Windows, directly on Linux.
 //! * `anyos install <installer>` unpacks an installer (MSI, ZIP, 7-Zip) into an
 //!   AnyOS environment; `anyos apps`, `anyos uninstall` and `anyos env` manage
 //!   what is installed. No installer code runs.
@@ -50,7 +51,7 @@ enum Command {
     Inspect(InspectArgs),
     /// Map, relocate and bind an image into an emulated guest process (dry run).
     Load(LoadArgs),
-    /// Run a Linux x86-64 ELF on this host.
+    /// Run a program: a Windows .exe (x86 or x64), or a Linux x86-64 ELF.
     Run(RunArgs),
     /// Per-program network redirects, applied inside AnyOS (not the host OS).
     #[command(subcommand)]
@@ -110,8 +111,11 @@ struct EnvArgs {
 
 #[derive(Args)]
 struct RunArgs {
-    /// Path to the Linux ELF executable.
+    /// Path to the program (Windows .exe or Linux ELF).
     program: PathBuf,
+    /// Windows programs: print each Windows API call and its result to stderr.
+    #[arg(long)]
+    trace: bool,
     /// Arguments passed to the guest program (argv[1..]).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -226,6 +230,9 @@ fn main() -> ExitCode {
 
 fn run_guest(a: RunArgs) -> Result<(), String> {
     let bytes = std::fs::read(&a.program).map_err(|e| format!("{}: {e}", a.program.display()))?;
+    if bytes.starts_with(b"MZ") {
+        return run_windows(&a);
+    }
 
     let name = a.program.display().to_string();
     let mut argv: Vec<&str> = vec![&name];
@@ -244,6 +251,34 @@ fn run_guest(a: RunArgs) -> Result<(), String> {
 
     if result.exit_code != 0 {
         return Err(format!("guest exited with code {}", result.exit_code));
+    }
+    Ok(())
+}
+
+fn run_windows(a: &RunArgs) -> Result<(), String> {
+    let opts = anyos_win32::RunOptions {
+        args: a.args.clone(),
+        trace: a.trace,
+        ..Default::default()
+    };
+    let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
+    let r = anyos_win32::run_executable(
+        &a.program,
+        &opts,
+        anyos_win32::Stdio {
+            stdout: &mut out,
+            stderr: &mut err,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    if a.trace {
+        eprintln!(
+            "[anyos] exit code {} after {} instructions and {} API calls",
+            r.exit_code, r.instructions, r.api_calls
+        );
+    }
+    if r.exit_code != 0 {
+        return Err(format!("program exited with code {}", r.exit_code));
     }
     Ok(())
 }

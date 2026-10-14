@@ -22,6 +22,7 @@ anyos-exec.workspace = true
 anyos-package.workspace = true
 anyos-env.workspace = true
 anyos-install.workspace = true
+anyos-win32.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -59,6 +59,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyos-backend"
+version = "0.1.0"
+dependencies = [
+ "anyos-memory",
+ "thiserror",
+]
+
+[[package]]
 name = "anyos-cli"
 version = "0.1.0"
 dependencies = [
@@ -72,6 +80,7 @@ dependencies = [
  "anyos-net",
  "anyos-package",
  "anyos-pe",
+ "anyos-win32",
  "clap",
  "libc",
  "serde",
@@ -142,6 +151,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyos-interp"
+version = "0.1.0"
+dependencies = [
+ "anyos-backend",
+ "anyos-memory",
+]
+
+[[package]]
 name = "anyos-linux"
 version = "0.1.0"
 dependencies = [
@@ -192,6 +209,18 @@ version = "0.1.0"
 dependencies = [
  "goblin",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "anyos-win32"
+version = "0.1.0"
+dependencies = [
+ "anyos-backend",
+ "anyos-interp",
+ "anyos-loader",
+ "anyos-memory",
+ "anyos-pe",
  "thiserror",
 ]
 
