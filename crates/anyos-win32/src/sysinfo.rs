@@ -975,6 +975,8 @@ pub(crate) static APIS: &[Api] = &[
 ];
 
 /// advapi32 exports that are not registry functions.
+/// Superseded by the ADVAPI32 table in api.rs; kept for reference.
+#[allow(dead_code)]
 pub(crate) static ADVAPI32: &[Api] = &[
     api("advapi32", "GetUserNameA", 2, |t, a| {
         let user = t.host.user.clone();

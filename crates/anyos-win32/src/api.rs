@@ -172,7 +172,7 @@ fn tables() -> [&'static [Api]; 15] {
         crate::registry::APIS,
         crate::resource::APIS,
         crate::strings::USER32,
-        crate::sysinfo::ADVAPI32,
+        ADVAPI32,
         crate::ui::APIS,
     ]
 }
@@ -501,7 +501,6 @@ pub(crate) fn copy_str_inout(
     Ok(1)
 }
 
-
 // ── ADVAPI32 ───────────────────────────────────────────────────────────────
 
 /// `advapi32` exports that are not in the registry family.
@@ -520,9 +519,15 @@ pub(crate) static ADVAPI32: &[Api] = &[
     api("bcryptprimitives", "ProcessPrng", 2, |t, a| {
         Ok(crate::sysinfo::gen_random(t, a[0], a[1] as u32 as u64) as u64)
     }),
-    api("bcrypt", "BCryptGenRandom", 4, |t, a| {
+    api("bcrypt", "BCryptGenRandom", 4, |_t, a| {
         // STATUS_SUCCESS / STATUS_INVALID_PARAMETER
-        Ok(if crate::sysinfo::random_bytes((a[2] as usize).min(64)).len() > 0 { 0 } else { 0xC000_000D })
+        Ok(
+            if !crate::sysinfo::random_bytes((a[2] as usize).min(64)).is_empty() {
+                0
+            } else {
+                0xC000_000D
+            },
+        )
     }),
     api("advapi32", "OpenProcessToken", 3, |t, a| {
         let h = t.k.insert(crate::objects::Object::Null, None);
@@ -565,24 +570,34 @@ pub(crate) static ADVAPI32: &[Api] = &[
     }),
     // ConvertStringSecurityDescriptorToSecurityDescriptor: PSDLENGTH
     // returns the buffer size on success (caller only needs the call to succeed).
-    api("advapi32", "ConvertStringSecurityDescriptorToSecurityDescriptorA", 3, |t, a| {
-        let s = read_str(t, a[0], false).unwrap_or_default();
-        let size = s.len() + 1;
-        if write_u32(t, a[2], size as u32) {
-            Ok(1)
-        } else {
-            fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
-        }
-    }),
-    api("advapi32", "ConvertStringSecurityDescriptorToSecurityDescriptorW", 3, |t, a| {
-        let s = read_wide(t, a[0]).unwrap_or_default();
-        let size = s.len() * 2 + 1;
-        if write_u32(t, a[2], size as u32) {
-            Ok(1)
-        } else {
-            fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
-        }
-    }),
+    api(
+        "advapi32",
+        "ConvertStringSecurityDescriptorToSecurityDescriptorA",
+        3,
+        |t, a| {
+            let s = read_str(t, a[0], false).unwrap_or_default();
+            let size = s.len() + 1;
+            if write_u32(t, a[2], size as u32) {
+                Ok(1)
+            } else {
+                fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
+            }
+        },
+    ),
+    api(
+        "advapi32",
+        "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        3,
+        |t, a| {
+            let s = read_wide(t, a[0]).unwrap_or_default();
+            let size = s.len() * 2 + 1;
+            if write_u32(t, a[2], size as u32) {
+                Ok(1)
+            } else {
+                fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
+            }
+        },
+    ),
     api("advapi32", "ConvertSidToStringSidA", 3, |t, a| {
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
         if sid == 0 {
@@ -599,12 +614,18 @@ pub(crate) static ADVAPI32: &[Api] = &[
         let s = format!("S-{}-{}{}\n", 1, 0, 0);
         Ok(copy_str_out(t, a[1], 260, &s, true))
     }),
-    api("advapi32", "ConvertSecurityDescriptorToStringSidA", 3, |t, a| {
-        Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", false) as u64)
-    }),
-    api("advapi32", "ConvertSecurityDescriptorToStringSidW", 3, |t, a| {
-        Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", true) as u64)
-    }),
+    api(
+        "advapi32",
+        "ConvertSecurityDescriptorToStringSidA",
+        3,
+        |t, a| Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", false)),
+    ),
+    api(
+        "advapi32",
+        "ConvertSecurityDescriptorToStringSidW",
+        3,
+        |t, a| Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", true)),
+    ),
     api("advapi32", "LookupAccountNameA", 6, |t, a| {
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
         if sid == 0 {
@@ -620,7 +641,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
         if !write_bytes(t, sid, b"S-1-5-21-0-0-0") {
             return fail(t, ERROR_NOACCESS, 0);
         }
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false))
     }),
     api("advapi32", "LookupAccountNameW", 6, |t, a| {
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
@@ -637,7 +658,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
         if !write_bytes(t, sid, b"S-1-5-21-0-0-0") {
             return fail(t, ERROR_NOACCESS, 0);
         }
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true))
     }),
     api("advapi32", "LookupSIDA", 6, |t, a| {
         let dom = crate::memory::heap_alloc(t, t.k.process_heap, 260, false);
@@ -645,7 +666,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
         }
         write_u32(t, a[5], 0);
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false))
     }),
     api("advapi32", "LookupSIDW", 6, |t, a| {
         let dom = crate::memory::heap_alloc(t, t.k.process_heap, 260, false);
@@ -653,7 +674,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
         }
         write_u32(t, a[5], 0);
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true))
     }),
     api("advapi32", "SetEntriesInAclA", 4, |_, _| Ok(1)),
     api("advapi32", "SetEntriesInAclW", 4, |_, _| Ok(1)),
@@ -701,26 +722,36 @@ pub(crate) static ADVAPI32: &[Api] = &[
     api("advapi32", "GetSecurityInfo", 13, |_, _| Ok(1)),
     api("advapi32", "GetKernelObjectSecurity", 8, |_, _| Ok(1)),
     // ── ADVAPI32: installer/string/registry helpers ──
-    api("advapi32", "ConvertStringSecurityDescriptorToSecurityDescriptorA", 3, |t, a| {
-        let s = read_str(t, a[0], false).unwrap_or_default();
-        let size = s.len() + 1;
-        if write_u32(t, a[2], size as u32) {
-            Ok(1)
-        } else {
-            fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
-        }
-    }),
-    api("advapi32", "ConvertStringSecurityDescriptorToSecurityDescriptorW", 3, |t, a| {
-        let s = read_wide(t, a[0]).unwrap_or_default();
-        let size = s.len() * 2 + 1;
-        if write_u32(t, a[2], size as u32) {
-            Ok(1)
-        } else {
-            fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
-        }
-    }),
+    api(
+        "advapi32",
+        "ConvertStringSecurityDescriptorToSecurityDescriptorA",
+        3,
+        |t, a| {
+            let s = read_str(t, a[0], false).unwrap_or_default();
+            let size = s.len() + 1;
+            if write_u32(t, a[2], size as u32) {
+                Ok(1)
+            } else {
+                fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
+            }
+        },
+    ),
+    api(
+        "advapi32",
+        "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        3,
+        |t, a| {
+            let s = read_wide(t, a[0]).unwrap_or_default();
+            let size = s.len() * 2 + 1;
+            if write_u32(t, a[2], size as u32) {
+                Ok(1)
+            } else {
+                fail(t, ERROR_INSUFFICIENT_BUFFER, 0)
+            }
+        },
+    ),
     api("advapi32", "ConvertSidToStringSidA", 3, |t, a| {
-        let heap = t.k.process_heap;
+        let _heap = t.k.process_heap;
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
         if sid == 0 {
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
@@ -729,7 +760,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
         Ok(copy_str_out(t, a[1], 260, &s, false))
     }),
     api("advapi32", "ConvertSidToStringSidW", 3, |t, a| {
-        let heap = t.k.process_heap;
+        let _heap = t.k.process_heap;
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
         if sid == 0 {
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
@@ -737,12 +768,18 @@ pub(crate) static ADVAPI32: &[Api] = &[
         let s = format!("S-{}-{}{}\n", 1, 0, 0);
         Ok(copy_str_out(t, a[1], 260, &s, true))
     }),
-    api("advapi32", "ConvertSecurityDescriptorToStringSidA", 3, |t, a| {
-        Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", false) as u64)
-    }),
-    api("advapi32", "ConvertSecurityDescriptorToStringSidW", 3, |t, a| {
-        Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", true) as u64)
-    }),
+    api(
+        "advapi32",
+        "ConvertSecurityDescriptorToStringSidA",
+        3,
+        |t, a| Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", false)),
+    ),
+    api(
+        "advapi32",
+        "ConvertSecurityDescriptorToStringSidW",
+        3,
+        |t, a| Ok(copy_str_out(t, a[1], 260, "S-1-5-21-0-0-0", true)),
+    ),
     api("advapi32", "LookupAccountNameA", 6, |t, a| {
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
         if sid == 0 {
@@ -758,7 +795,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
         if !write_bytes(t, sid, b"S-1-5-21-0-0-0") {
             return fail(t, ERROR_NOACCESS, 0);
         }
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false))
     }),
     api("advapi32", "LookupAccountNameW", 6, |t, a| {
         let sid = crate::memory::heap_alloc(t, t.k.process_heap, 4096, false);
@@ -775,7 +812,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
         if !write_bytes(t, sid, b"S-1-5-21-0-0-0") {
             return fail(t, ERROR_NOACCESS, 0);
         }
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true))
     }),
     api("advapi32", "LookupSIDA", 6, |t, a| {
         let dom = crate::memory::heap_alloc(t, t.k.process_heap, 260, false);
@@ -783,7 +820,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
         }
         write_u32(t, a[5], 0);
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", false))
     }),
     api("advapi32", "LookupSIDW", 6, |t, a| {
         let dom = crate::memory::heap_alloc(t, t.k.process_heap, 260, false);
@@ -791,7 +828,7 @@ pub(crate) static ADVAPI32: &[Api] = &[
             return fail(t, ERROR_NOT_ENOUGH_MEMORY, 0);
         }
         write_u32(t, a[5], 0);
-        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true) as u64)
+        Ok(copy_str_out(t, a[1], 260, "BUILTIN\\Users", true))
     }),
     api("advapi32", "SetEntriesInAclA", 4, |_, _| Ok(1)),
     api("advapi32", "SetEntriesInAclW", 4, |_, _| Ok(1)),
@@ -899,17 +936,20 @@ pub(crate) static ADVAPI32: &[Api] = &[
     api("advapi32", "RegDisableReflectionKey", 2, |_, _| Ok(1)),
     api("advapi32", "RegLoadMappedFile", 7, |_, _| Ok(1)),
     api("advapi32", "RegHookCrossProcessNavigation", 1, |_, _| Ok(1)),
-    api("advapi32", "RegUninjectIdleProcessorCallback", 1, |_, _| Ok(1)),
+    api("advapi32", "RegUninjectIdleProcessorCallback", 1, |_, _| {
+        Ok(1)
+    }),
     api("advapi32", "RegCopyTree", 4, |_, _| Ok(1)),
+    api("shell32", "IsUserAnAdmin", 0, |_, _| Ok(1)),
 ];
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn advapi32_conversions_are_possible() {
-        assert!(crate::api::implemented("advapi32", "ConvertStringSecurityDescriptorToSecurityDescriptorW"));
+        assert!(crate::api::implemented(
+            "advapi32",
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW"
+        ));
     }
 }
-  
