@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   before the program. `--trace` logs every API call. Unsupported APIs and
   instructions stop the run with a message naming them.
 - `anyos-backend` — the `ExecutionBackend` trait shared by all execution backends.
+- Release workflow: pushing a `v*` tag builds `anyos` for Linux x86-64, Windows
+  x86-64 and macOS (universal) and attaches the archives and `SHA256SUMS` to the
+  GitHub release.
 
 - Standalone Rust runtime that can inspect and load Windows PE programs into an
   emulated guest process: map, relocate, bind imports, set up TLS, page protections,

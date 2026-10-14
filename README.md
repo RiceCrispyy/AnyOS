@@ -13,6 +13,14 @@ handful of `kernel32` functions exist so far. AnyOS also recognises Linux (ELF)
 and macOS (Mach-O) programs and says how it would run them, and it keeps
 per-program network redirects. See [docs/architecture.md](docs/architecture.md).
 
+## Download
+
+Prebuilt `anyos` binaries for Linux (x86-64), Windows (x86-64) and macOS
+(universal, Apple Silicon and Intel) are attached to each
+[GitHub release](https://github.com/RiceCrispyy/AnyOS/releases). Unpack the
+archive and run `anyos` from a terminal. The binaries are not signed yet, so
+Windows SmartScreen and macOS Gatekeeper may ask you to confirm the first launch.
+
 ## Quick start
 
 ```sh
