@@ -21,14 +21,19 @@ use std::io::Read;
 use crate::{InstallError, Installed, Product, Writer};
 
 fn malformed(msg: impl Into<String>) -> InstallError {
-    InstallError::Malformed { what: "Debian package", message: msg.into() }
+    InstallError::Malformed {
+        what: "Debian package",
+        message: msg.into(),
+    }
 }
 
 /// Parse the control file's fields into a Product.
 fn parse_control(text: &str) -> Product {
     let mut p = Product::default();
     for line in text.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let v = v.trim();
         match k.trim() {
             "Package" if p.name.is_empty() => p.name = v.to_string(),
@@ -50,7 +55,11 @@ fn parse_control(text: &str) -> Product {
 fn linux_to_win(path: &str) -> String {
     let rel = path.trim_start_matches('/').trim_start_matches("./");
     let rel = rel.replace('/', "\\");
-    if rel.is_empty() { "C:\\".into() } else { format!("C:\\{rel}") }
+    if rel.is_empty() {
+        "C:\\".into()
+    } else {
+        format!("C:\\{rel}")
+    }
 }
 
 /// Extract a tar archive (already decompressed) into the environment.
@@ -94,9 +103,7 @@ fn extract_data(ar_bytes: &[u8], w: &mut Writer) -> Result<usize, InstallError> 
     let mut offset = 8usize; // skip "!<arch>\n"
     while offset + 60 <= ar_bytes.len() {
         let header = &ar_bytes[offset..offset + 60];
-        let name = std::str::from_utf8(&header[0..16])
-            .unwrap_or("")
-            .trim_end();
+        let name = std::str::from_utf8(&header[0..16]).unwrap_or("").trim_end();
         let size: usize = std::str::from_utf8(&header[48..58])
             .unwrap_or("0")
             .trim()
@@ -107,9 +114,9 @@ fn extract_data(ar_bytes: &[u8], w: &mut Writer) -> Result<usize, InstallError> 
             return Err(malformed("bad ar member magic"));
         }
         offset += 60;
-        let member = ar_bytes.get(offset..offset + size).ok_or_else(|| {
-            malformed(format!("ar member {name} is truncated"))
-        })?;
+        let member = ar_bytes
+            .get(offset..offset + size)
+            .ok_or_else(|| malformed(format!("ar member {name} is truncated")))?;
 
         if name.starts_with("data.tar") {
             let count = if name.ends_with(".gz") || name.ends_with(".tgz") {
@@ -119,8 +126,8 @@ fn extract_data(ar_bytes: &[u8], w: &mut Writer) -> Result<usize, InstallError> 
                 let xz = xz2::read::XzDecoder::new(member);
                 extract_tar(xz, w)?
             } else if name.ends_with(".zst") {
-                let zst = zstd::Decoder::new(member)
-                    .map_err(|e| malformed(format!("zstd: {e}")))?;
+                let zst =
+                    zstd::Decoder::new(member).map_err(|e| malformed(format!("zstd: {e}")))?;
                 extract_tar(zst, w)?
             } else if name == "data.tar" {
                 extract_tar(member, w)?
@@ -146,9 +153,7 @@ fn read_control(ar_bytes: &[u8]) -> Product {
     let mut offset = 8usize;
     while offset + 60 <= ar_bytes.len() {
         let header = &ar_bytes[offset..offset + 60];
-        let name = std::str::from_utf8(&header[0..16])
-            .unwrap_or("")
-            .trim_end();
+        let name = std::str::from_utf8(&header[0..16]).unwrap_or("").trim_end();
         let size: usize = std::str::from_utf8(&header[48..58])
             .unwrap_or("0")
             .trim()
@@ -220,11 +225,19 @@ pub(crate) fn product(bytes: &[u8], stem: &str) -> Result<Product, InstallError>
     Ok(p)
 }
 
-pub(crate) fn install(w: &mut Writer, bytes: &[u8], product: &Product) -> Result<Installed, InstallError> {
+pub(crate) fn install(
+    w: &mut Writer,
+    bytes: &[u8],
+    product: &Product,
+) -> Result<Installed, InstallError> {
     let _count = extract_data(bytes, w)?;
     let install_dir = Some(linux_to_win("/usr"));
     let main = crate::guess_main(&w.files, &product.name);
-    Ok(Installed { install_dir, main, ..Installed::default() })
+    Ok(Installed {
+        install_dir,
+        main,
+        ..Installed::default()
+    })
 }
 
 #[cfg(test)]

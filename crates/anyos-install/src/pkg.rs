@@ -20,14 +20,21 @@ use std::io::{self, Read};
 use crate::{InstallError, Installed, Product, Writer};
 
 fn malformed(msg: impl Into<String>) -> InstallError {
-    InstallError::Malformed { what: "macOS package", message: msg.into() }
+    InstallError::Malformed {
+        what: "macOS package",
+        message: msg.into(),
+    }
 }
 
 /// Map a macOS path to a Windows path under `C:\`.
 fn mac_to_win(path: &str) -> String {
     let rel = path.trim_start_matches('/').trim_start_matches("./");
     let rel = rel.replace('/', "\\");
-    if rel.is_empty() { "C:\\".into() } else { format!("C:\\{rel}") }
+    if rel.is_empty() {
+        "C:\\".into()
+    } else {
+        format!("C:\\{rel}")
+    }
 }
 
 /// Extract a gzip-compressed CPIO archive.
@@ -58,7 +65,8 @@ fn extract_cpio<R: Read>(mut src: R, w: &mut Writer) -> Result<usize, InstallErr
 
         // Read filename.
         let mut name_buf = vec![0u8; namesize];
-        src.read_exact(&mut name_buf).map_err(|e| malformed(format!("CPIO name: {e}")))?;
+        src.read_exact(&mut name_buf)
+            .map_err(|e| malformed(format!("CPIO name: {e}")))?;
         let name = std::str::from_utf8(&name_buf)
             .unwrap_or("")
             .trim_end_matches('\0')
@@ -133,8 +141,7 @@ fn attr_value<'a>(xml: &'a str, attr: &str) -> Option<&'a str> {
 
 pub(crate) fn product(bytes: &[u8], stem: &str) -> Result<Product, InstallError> {
     let cursor = io::Cursor::new(bytes);
-    let mut pkg =
-        xara::PkgReader::open(cursor).map_err(|e| malformed(format!("XAR: {e}")))?;
+    let mut pkg = xara::PkgReader::open(cursor).map_err(|e| malformed(format!("XAR: {e}")))?;
     let components = pkg.components();
     let mut p = Product::default();
     for component in &components {
@@ -162,8 +169,7 @@ pub(crate) fn install(
     product: &Product,
 ) -> Result<Installed, InstallError> {
     let cursor = io::Cursor::new(bytes);
-    let mut pkg =
-        xara::PkgReader::open(cursor).map_err(|e| malformed(format!("XAR: {e}")))?;
+    let mut pkg = xara::PkgReader::open(cursor).map_err(|e| malformed(format!("XAR: {e}")))?;
     let components = pkg.components();
 
     let mut install_location: Option<String> = None;
@@ -194,7 +200,11 @@ pub(crate) fn install(
     if total == 0 {
         w.note("no files were extracted from any payload");
     }
-    Ok(Installed { install_dir, main, ..Installed::default() })
+    Ok(Installed {
+        install_dir,
+        main,
+        ..Installed::default()
+    })
 }
 
 #[cfg(test)]
@@ -203,7 +213,10 @@ mod tests {
 
     #[test]
     fn path_mapping() {
-        assert_eq!(mac_to_win("/Applications/Foo.app"), r"C:\Applications\Foo.app");
+        assert_eq!(
+            mac_to_win("/Applications/Foo.app"),
+            r"C:\Applications\Foo.app"
+        );
         assert_eq!(mac_to_win("./usr/bin/foo"), r"C:\usr\bin\foo");
     }
 
