@@ -43,6 +43,10 @@ pub enum PackageKind {
     MacPkg,
     /// macOS disk image (UDIF).
     Dmg,
+    /// A plain ZIP archive, treated as a portable Windows app.
+    Zip,
+    /// A plain 7-Zip archive, treated as a portable Windows app.
+    SevenZip,
 }
 
 /// Which OS the package installs software for.
@@ -89,6 +93,8 @@ impl PackageKind {
             PackageKind::AppImage => "AppImage",
             PackageKind::MacPkg => "macOS installer package",
             PackageKind::Dmg => "macOS disk image",
+            PackageKind::Zip => "ZIP archive",
+            PackageKind::SevenZip => "7-Zip archive",
         }
     }
 
@@ -211,6 +217,12 @@ fn identify_other(bytes: &[u8]) -> Option<Package> {
     }
     if bytes.starts_with(b"xar!") {
         return found(PackageKind::MacPkg);
+    }
+    if bytes.starts_with(b"PK\x03\x04") {
+        return found(PackageKind::Zip);
+    }
+    if bytes.starts_with(b"7z\xBC\xAF\x27\x1C") {
+        return found(PackageKind::SevenZip);
     }
     // UDIF disk images end with a 512-byte "koly" trailer.
     if bytes.len() >= 512 && bytes[bytes.len() - 512..].starts_with(b"koly") {

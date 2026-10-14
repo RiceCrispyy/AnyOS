@@ -51,7 +51,7 @@ impl CallGate {
         }
         let id = self.entries.len() as u32;
         let per_chunk = CHUNK_SIZE / STUB_SIZE;
-        if id as u64 % per_chunk == 0 {
+        if (id as u64).is_multiple_of(per_chunk) {
             let base = mem.map_anywhere(CHUNK_SIZE, Protection::RW, "anyos call gate", None)?;
             self.chunks.push(base);
             fill_traps(mem, base, machine)?;
@@ -77,7 +77,7 @@ impl CallGate {
             .iter()
             .enumerate()
             .find(|(_, &b)| address >= b && address < b + CHUNK_SIZE)?;
-        if (address - base) % STUB_SIZE != 0 {
+        if !(address - base).is_multiple_of(STUB_SIZE) {
             return None;
         }
         let id = chunk_idx as u64 * per_chunk + (address - base) / STUB_SIZE;

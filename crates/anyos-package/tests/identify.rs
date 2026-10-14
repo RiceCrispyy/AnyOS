@@ -112,6 +112,11 @@ fn linux_and_macos_packages() {
     assert_eq!(kind(b"!<arch>\ndebian-binary   0"), Some(PackageKind::Deb));
     assert_eq!(kind(b"\xED\xAB\xEE\xDB\x03\x00"), Some(PackageKind::Rpm));
     assert_eq!(kind(b"xar!\x00\x1c"), Some(PackageKind::MacPkg));
+    assert_eq!(kind(b"PK\x03\x04\x14\0"), Some(PackageKind::Zip));
+    assert_eq!(
+        kind(b"7z\xBC\xAF\x27\x1C\0\x04"),
+        Some(PackageKind::SevenZip)
+    );
 
     let mut dmg = vec![0u8; 4096];
     let n = dmg.len();

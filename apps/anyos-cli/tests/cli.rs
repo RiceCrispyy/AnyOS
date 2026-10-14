@@ -1,6 +1,6 @@
 //! End-to-end tests of the `anyos` binary.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn fixture(rel: &str) -> PathBuf {
@@ -195,4 +195,85 @@ fn inspect_recognises_installers() {
     assert_eq!(v["package"]["kind"], "Deb");
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn install_apps_uninstall_round_trip() {
+    let dir = std::env::temp_dir().join(format!("anyos-cli-install-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let home = dir.join("home");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_anyos"))
+            .args(args)
+            .env("ANYOS_HOME", &home)
+            .output()
+            .expect("run anyos")
+    };
+
+    // A stored (uncompressed) ZIP built by hand: one file, Tool/tool.exe.
+    let name = b"Tool/tool.exe";
+    let data = b"MZ tool";
+    let crc = crc32(data);
+    let mut zip = Vec::new();
+    let local = |zip: &mut Vec<u8>| {
+        zip.extend_from_slice(b"PK\x03\x04\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00");
+        zip.extend_from_slice(&crc.to_le_bytes());
+        zip.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        zip.extend_from_slice(&0u16.to_le_bytes());
+        zip.extend_from_slice(name);
+        zip.extend_from_slice(data);
+    };
+    local(&mut zip);
+    let cd_start = zip.len() as u32;
+    zip.extend_from_slice(b"PK\x01\x02\x14\x00\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00");
+    zip.extend_from_slice(&crc.to_le_bytes());
+    zip.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    zip.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    zip.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    zip.extend_from_slice(&[0u8; 12]);
+    zip.extend_from_slice(&0u32.to_le_bytes());
+    zip.extend_from_slice(name);
+    let cd_len = zip.len() as u32 - cd_start;
+    zip.extend_from_slice(b"PK\x05\x06\x00\x00\x00\x00\x01\x00\x01\x00");
+    zip.extend_from_slice(&cd_len.to_le_bytes());
+    zip.extend_from_slice(&cd_start.to_le_bytes());
+    zip.extend_from_slice(&0u16.to_le_bytes());
+    let pkg = dir.join("tool.zip");
+    std::fs::write(&pkg, &zip).unwrap();
+
+    let o = run(&["install", pkg.to_str().unwrap()]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(stdout(&o).contains("Installed Tool"), "{}", stdout(&o));
+
+    let o = run(&["apps", "--json"]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["apps"][0]["id"], "tool");
+    let main = v["apps"][0]["main_host_path"].as_str().unwrap().to_string();
+    assert_eq!(std::fs::read(&main).unwrap(), data);
+
+    let o = run(&["uninstall", "tool"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!Path::new(&main).exists());
+    let o = run(&["env"]);
+    assert!(stdout(&o).contains("default"));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
 }
