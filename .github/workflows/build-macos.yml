@@ -39,7 +39,8 @@ jobs:
 
       - name: Build anyos for macOS (universal2)
         run: |
-          cargo build --release --target ${{ env.MACOS_TARGETS }}
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
           llvm-lipo -create target/aarch64-apple-darwin/release/anyos target/x86_64-apple-darwin/release/anyos -output target/release/anyos
           ls -l target/release/anyos
 
