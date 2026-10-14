@@ -26,7 +26,9 @@ pub(crate) fn map(
     let tag = format!("image {name}");
 
     let base = match policy {
-        BasePolicy::Preferred if preferred % PAGE_SIZE == 0 && mem.is_free(preferred, size) => {
+        BasePolicy::Preferred
+            if preferred.is_multiple_of(PAGE_SIZE) && mem.is_free(preferred, size) =>
+        {
             mem.map(preferred, size, Protection::RW, &tag)?;
             preferred
         }

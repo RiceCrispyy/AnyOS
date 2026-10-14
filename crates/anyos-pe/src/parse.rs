@@ -499,7 +499,7 @@ fn parse_relocations(ctx: &Ctx, dir: DataDirectory) -> Result<Vec<BaseRelocation
         if block_size == 0 {
             break; // trailing padding emitted by some linkers
         }
-        if block_size < 8 || block_size % 2 != 0 || pos + block_size > dir.size as u64 {
+        if block_size < 8 || !block_size.is_multiple_of(2) || pos + block_size > dir.size as u64 {
             return Err(PeError::Malformed(format!(
                 "relocation block at +0x{pos:x} has bad size {block_size}"
             )));

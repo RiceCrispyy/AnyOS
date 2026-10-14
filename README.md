@@ -24,6 +24,23 @@ cargo build --release
 ./target/release/anyos inspect setup.exe                   # installers: NSIS, Inno, MSI, .deb, .pkg, ...
 ```
 
+### Installing apps
+
+`anyos install` puts an app into an AnyOS environment (its own `C:` drive,
+registry and app list) instead of onto your computer. It unpacks the installer
+itself, so no installer code runs. Supported now: `.msi`, ZIP and 7-Zip archives,
+and ZIP/7-Zip self-extracting `.exe` files. Inno Setup and NSIS are next.
+
+```sh
+./target/release/anyos install app.msi             # into the "default" environment
+./target/release/anyos install game.zip --env games
+./target/release/anyos apps                        # what is installed, and where
+./target/release/anyos uninstall app
+./target/release/anyos env default                 # where an environment lives
+```
+
+Installed programs cannot be started yet; that comes with the execution work.
+
 ### Per-program network redirects
 
 A program's own traffic can be sent to a different server without touching the
@@ -63,6 +80,8 @@ crates/anyos-loader   process assembly: map, relocate, load DLLs, bind, TLS, pro
 crates/anyos-format   format detection (PE, ELF, Mach-O incl. universal) and any-OS run plan
 crates/anyos-net      per-program network policy (redirects) and the <program>.anyos.toml profile
 crates/anyos-package  installer and package identification (NSIS, Inno, MSI, .deb, .pkg, ...)
+crates/anyos-env      environments: private C: drive, registry, installed-app index
+crates/anyos-install  installs MSI, ZIP and 7-Zip packages into an environment
 apps/anyos-cli        the `anyos` command
 tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux and macOS + build scripts
 docs/architecture.md  design, interfaces, security model, roadmap

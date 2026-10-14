@@ -105,7 +105,9 @@ edits and tests profiles today.
 | `crates/anyos-loader` | built | `Process`: maps images, applies base relocations, loads application DLLs, binds imports to guest exports or call-gate stubs, sets TLS slots, applies page protections. |
 | `crates/anyos-format` | built | Format detection (PE, ELF, Mach-O, universal) and the any-OS run plan. |
 | `crates/anyos-net` | built | Per-program network policy (redirects) and the `<program>.anyos.toml` profile. |
-| `crates/anyos-package` | built (identification) | Recognises installers and packages (NSIS, Inno Setup, MSI, WiX Burn, `.deb`, `.rpm`, AppImage, `.pkg`, `.dmg`) and picks the install route. |
+| `crates/anyos-package` | built (identification) | Recognises installers and packages (NSIS, Inno Setup, MSI, WiX Burn, `.deb`, `.rpm`, AppImage, `.pkg`, `.dmg`, ZIP, 7-Zip) and picks the install route. |
+| `crates/anyos-env` | built | Environments: private `C:` drive, path mapping, registry store, installed-app index. |
+| `crates/anyos-install` | built (MSI, ZIP, 7-Zip) | Unpacks installers into an environment without running them; uninstall. |
 | `apps/anyos-cli` | built | `anyos inspect` (PE, ELF, Mach-O), `anyos load` (dry run), `anyos redirect`. |
 | `anyos-exec` (execution API) | next | `ExecutionBackend` trait, guest CPU context, call-gate dispatch. |
 | `anyos-exec-native`, `anyos-exec-interp`, `anyos-exec-dbt` | later | Backends: direct execution, a reference interpreter, and a translator. |
@@ -285,10 +287,43 @@ Two routes, used in this order:
    needs the console-level Windows API (milestone 4) plus the registry,
    shell folders, `CreateProcess` and shortcuts, but not the GUI layer.
 
-An environment is a directory under the AnyOS data directory with a `drive_c`
-tree (`Program Files`, `ProgramData`, `Users/<name>/AppData`), a registry store,
-and an index of installed apps that `anyos run` and an uninstaller use. Linux and
-macOS packages get the matching tree (`usr/`, `Applications/`).
+### Environments (`anyos-env`)
+
+```text
+<data dir>/envs/<name>/
+  env.toml                  name and the Windows user name apps see
+  apps.toml                 installed apps: files, folders, registry values, shortcuts
+  windows/registry.toml     registry keys and values
+  windows/drive_c/          Program Files, Program Files (x86), ProgramData,
+                            Users/<user>/AppData, Windows/System32, ...
+```
+
+The data directory is `$ANYOS_HOME`, else `~/Library/Application Support/AnyOS`
+(macOS), `%LOCALAPPDATA%\AnyOS` (Windows) or `$XDG_DATA_HOME/anyos`. Windows
+paths map to host paths through `Env::host_path`, which matches names
+case-insensitively and refuses other drives and `..`, so no package can write
+outside its environment. The same mapping will back the file APIs once programs
+run. Linux and macOS packages will get matching trees (`usr/`, `Applications/`).
+
+### What `anyos install` does today (`anyos-install`)
+
+- **MSI:** resolves the `Directory` table (standard folders follow 64-bit
+  Windows rules, so `ProgramFilesFolder` is `C:\Program Files (x86)`), writes
+  every `File` row out of its cabinet (embedded or beside the `.msi`), creates
+  `CreateFolder` folders, applies `Registry` with formatted strings expanded,
+  records `Shortcut` rows, and adds an Add/Remove Programs key. Every feature and
+  component is installed. Custom actions, conditions and tables such as
+  `ServiceInstall` or `Environment` are skipped and listed in the app's notes.
+- **ZIP / 7-Zip archives and self-extractors:** unpacked into
+  `C:\Program Files\<name>`, where the name is the archive's single top folder
+  or its file name.
+- `anyos uninstall` removes exactly what was recorded: files no other app also
+  installed, folders left empty, and the registry values and keys it created.
+- The main program is the shortcut target when there is one, else the most
+  likely `.exe` (not an uninstaller, updater or helper).
+
+Checked against the real PowerShell 7.4.5 MSI: all 912 files match the
+package's sizes and the 151 hashes it carries.
 
 ## Guest memory
 
@@ -337,7 +372,7 @@ writes (`*_raw`) marks the places where it acts as the kernel.
 | 2. PE loader (map, relocate, bind, TLS, protections) | Done (emulated guest memory) |
 | 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Next |
 | 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | |
-| 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification done |
+| 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification, environments, MSI/ZIP/7-Zip done; Inno and NSIS next |
 | 5. Basic Win32 GUI on macOS: windows, messages, input, GDI | |
 | 6. Modern .NET via hostfxr/CoreCLR | |
 | 7. Linux and ChromeOS adapters, own x86-64 to ARM64 translator | |

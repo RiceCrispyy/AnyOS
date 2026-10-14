@@ -10,6 +10,9 @@
 //! * `anyos run <file>` runs a Linux x86-64 ELF on the current host.
 //!   On Windows x64 the guest code runs natively with AnyOS intercepting Linux
 //!   syscalls. On Linux the ELF is run directly (useful for testing).
+//! * `anyos install <installer>` unpacks an installer (MSI, ZIP, 7-Zip) into an
+//!   AnyOS environment; `anyos apps`, `anyos uninstall` and `anyos env` manage
+//!   what is installed. No installer code runs.
 //! * `anyos redirect ...` edits a program's own network redirects, stored in
 //!   `<program>.anyos.toml` beside it. They apply only to that program when AnyOS
 //!   runs it; the host's hosts file and DNS are never touched.
@@ -17,11 +20,12 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyos_env::{AppRecord, Env};
 use anyos_exec::{run as exec_run, RunOptions};
 use anyos_format::{Detected, GuestMode, ProgramSummary};
 use anyos_loader::{BasePolicy, Binding, LoadOptions, Process};
 use anyos_net::{profile_path, AppProfile, NetPolicy};
-use anyos_package::{InstallRoute, Package};
+use anyos_package::{InstallRoute, Package, PackageKind};
 use anyos_pe::catalog::classify;
 use anyos_pe::report::{
     self, CompatibilityReport, DependencyLocation, HostArch, HostOs, HostPlatform, Status,
@@ -51,6 +55,57 @@ enum Command {
     /// Per-program network redirects, applied inside AnyOS (not the host OS).
     #[command(subcommand)]
     Redirect(RedirectCommand),
+    /// Install an app from its installer into an AnyOS environment.
+    ///
+    /// Supports .msi packages, ZIP and 7-Zip archives, and self-extracting
+    /// ZIP/7-Zip .exe files. No installer code runs; nothing is written
+    /// outside the environment.
+    Install(InstallArgs),
+    /// List the apps installed in an environment.
+    Apps(AppsArgs),
+    /// Remove an installed app from an environment.
+    Uninstall(UninstallArgs),
+    /// List environments, or show where one lives.
+    Env(EnvArgs),
+}
+
+#[derive(Args)]
+struct EnvOpt {
+    /// Environment to use (created when missing).
+    #[arg(long = "env", default_value = anyos_env::DEFAULT_ENV)]
+    name: String,
+}
+
+#[derive(Args)]
+struct InstallArgs {
+    /// The installer or package.
+    installer: PathBuf,
+    #[command(flatten)]
+    env: EnvOpt,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct AppsArgs {
+    #[command(flatten)]
+    env: EnvOpt,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct UninstallArgs {
+    /// App id or name, as `anyos apps` shows it.
+    app: String,
+    #[command(flatten)]
+    env: EnvOpt,
+}
+
+#[derive(Args)]
+struct EnvArgs {
+    /// Show this environment's folders instead of listing all of them.
+    name: Option<String>,
 }
 
 #[derive(Args)]
@@ -155,6 +210,10 @@ fn main() -> ExitCode {
         Command::Load(a) => load(a),
         Command::Run(a) => run_guest(a),
         Command::Redirect(c) => redirect(c),
+        Command::Install(a) => install_app(a),
+        Command::Apps(a) => list_apps(a),
+        Command::Uninstall(a) => uninstall_app(a),
+        Command::Env(a) => env_info(a),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -185,6 +244,165 @@ fn run_guest(a: RunArgs) -> Result<(), String> {
 
     if result.exit_code != 0 {
         return Err(format!("guest exited with code {}", result.exit_code));
+    }
+    Ok(())
+}
+
+fn open_env(name: &str) -> Result<Env, String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    Env::open_or_create(&dir, name).map_err(|e| e.to_string())
+}
+
+fn install_app(a: InstallArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let r = anyos_install::install(&env, &a.installer).map_err(|e| e.to_string())?;
+    if a.json {
+        let out = serde_json::json!({
+            "env": env.name(),
+            "app": app_json(&env, &r.app),
+            "bytes_written": r.bytes_written,
+            "registry_values": r.registry_values,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let app = &r.app;
+    println!(
+        "Installed {}{} into environment \"{}\"",
+        app.name,
+        app.version
+            .as_ref()
+            .map(|v| format!(" {v}"))
+            .unwrap_or_default(),
+        env.name()
+    );
+    println!("  Id:              {}", app.id);
+    println!("  From:            {} ({})", app.source, app.package);
+    println!(
+        "  Files:           {} ({} bytes)",
+        app.files.len(),
+        r.bytes_written
+    );
+    if r.registry_values > 0 {
+        println!("  Registry values: {}", r.registry_values);
+    }
+    print_app_paths(&env, app);
+    for s in &app.shortcuts {
+        println!("  Shortcut:        {} -> {}", s.name, s.target);
+    }
+    if !app.notes.is_empty() {
+        println!("\nSkipped");
+        for n in &app.notes {
+            println!("  - {n}");
+        }
+    }
+    println!("\nAnyOS cannot start Windows programs yet; the app is ready for when it can.");
+    Ok(())
+}
+
+fn print_app_paths(env: &Env, app: &AppRecord) {
+    let host = |w: &str| {
+        env.host_path(w)
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    };
+    if let Some(d) = &app.install_dir {
+        println!("  Folder:          {d}");
+        println!("                   {}", host(d));
+    }
+    if let Some(m) = &app.main {
+        println!("  Program:         {m}");
+    }
+}
+
+fn app_json(env: &Env, app: &AppRecord) -> serde_json::Value {
+    let mut v = serde_json::to_value(app).unwrap_or_default();
+    if let Some(m) = &app.main {
+        v["main_host_path"] =
+            serde_json::json!(env.host_path(m).map(|p| p.display().to_string()).ok());
+    }
+    v
+}
+
+fn list_apps(a: AppsArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let index = env.apps().map_err(|e| e.to_string())?;
+    if a.json {
+        let apps: Vec<_> = index.apps.iter().map(|app| app_json(&env, app)).collect();
+        let out = serde_json::json!({ "env": env.name(), "apps": apps });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if index.apps.is_empty() {
+        println!("No apps installed in environment \"{}\".", env.name());
+        return Ok(());
+    }
+    println!("Apps in environment \"{}\"", env.name());
+    for app in &index.apps {
+        println!(
+            "\n{} ({}){}",
+            app.name,
+            app.id,
+            app.version
+                .as_ref()
+                .map(|v| format!(", version {v}"))
+                .unwrap_or_default()
+        );
+        print_app_paths(&env, app);
+    }
+    Ok(())
+}
+
+fn uninstall_app(a: UninstallArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let r = anyos_install::uninstall(&env, &a.app).map_err(|e| e.to_string())?;
+    println!(
+        "Removed {} from environment \"{}\": {} file(s){}{}",
+        r.app.name,
+        env.name(),
+        r.files_removed,
+        if r.files_shared > 0 {
+            format!(", {} kept for other apps", r.files_shared)
+        } else {
+            String::new()
+        },
+        if r.registry_keys_removed > 0 {
+            format!(", {} registry key(s)", r.registry_keys_removed)
+        } else {
+            String::new()
+        }
+    );
+    Ok(())
+}
+
+fn env_info(a: EnvArgs) -> Result<(), String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    match a.name {
+        None => {
+            let names = anyos_env::list(&dir).map_err(|e| e.to_string())?;
+            if names.is_empty() {
+                println!("No environments yet. `anyos install` creates \"default\".");
+            }
+            for n in names {
+                println!("{n}");
+            }
+            println!("\nData folder: {}", dir.display());
+        }
+        Some(name) => {
+            let env = open_env(&name)?;
+            let apps = env.apps().map_err(|e| e.to_string())?;
+            println!("Environment \"{}\"", env.name());
+            println!("  Folder:          {}", env.root().display());
+            println!("  C: drive:        {}", env.drive_c().display());
+            println!("  Windows user:    {}", env.user());
+            println!("  Apps installed:  {}", apps.apps.len());
+        }
     }
     Ok(())
 }
@@ -452,7 +670,16 @@ fn print_package(p: &Package) {
     if !silent.is_empty() {
         println!("  Silent install:  {}", silent.join(" "));
     }
-    println!("  `anyos install` is not built yet; this only identifies the package.");
+    if !matches!(
+        p.kind,
+        PackageKind::Msi
+            | PackageKind::Zip
+            | PackageKind::ZipSfx
+            | PackageKind::SevenZip
+            | PackageKind::SevenZipSfx
+    ) {
+        println!("  `anyos install` does not support this kind yet.");
+    }
 }
 
 fn inspect_other(

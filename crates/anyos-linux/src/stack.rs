@@ -82,7 +82,7 @@ pub fn build(
     strings.extend_from_slice(&p.at_random);
 
     // Align the strings region to 16 bytes.
-    while strings.len() % 16 != 0 {
+    while !strings.len().is_multiple_of(16) {
         strings.push(0);
     }
 
