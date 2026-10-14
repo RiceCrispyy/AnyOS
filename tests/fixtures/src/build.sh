@@ -18,7 +18,7 @@ CFLAGS="-O1 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -Wall -We
 
 for t in "${TARGETS[@]}"; do
   read -r arch triple dlm lm <<<"$t"
-  for lib in kernel32 user32; do
+  for lib in kernel32 user32 advapi32; do
     if [ "$arch" = x86 ]; then
       # stdcall: keep @N decoration in the import lib, strip it from the DLL name (-k).
       llvm-dlltool -m "$dlm" -d "$lib.def" -l "$WORK/$lib-$arch.lib" -k
@@ -27,7 +27,7 @@ for t in "${TARGETS[@]}"; do
       llvm-dlltool -m "$dlm" -d "$WORK/$lib-$arch.def" -l "$WORK/$lib-$arch.lib"
     fi
   done
-  for src in hello_console hello_gui exports_dll uses_dll; do
+  for src in hello_console hello_gui exports_dll uses_dll dynload; do
     clang --target="$triple" $CFLAGS -c "$src.c" -o "$WORK/$src-$arch.obj"
   done
   out="$OUT/$arch"
@@ -43,5 +43,13 @@ for t in "${TARGETS[@]}"; do
     "$WORK/exports_dll-$arch.obj" /out:"$out/exports_dll.dll" /implib:"$WORK/exports_dll-$arch.lib"
   lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
     "$WORK/uses_dll-$arch.obj" "$WORK/exports_dll-$arch.lib" "$WORK/kernel32-$arch.lib" /out:"$out/uses_dll.exe"
+  lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
+    "$WORK/dynload-$arch.obj" "$WORK/kernel32-$arch.lib" /out:"$out/dynload.exe"
+  if [ "$arch" != arm64 ]; then
+    clang --target="$triple" $CFLAGS -c apitest.c -o "$WORK/apitest-$arch.obj"
+    lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
+      "$WORK/apitest-$arch.obj" "$WORK/kernel32-$arch.lib" "$WORK/user32-$arch.lib" \
+      "$WORK/advapi32-$arch.lib" /out:"$out/apitest.exe"
+  fi
 done
 ls -lR "$OUT"

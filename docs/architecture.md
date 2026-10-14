@@ -105,9 +105,15 @@ edits and tests profiles today.
 | `crates/anyos-loader` | built | `Process`: maps images, applies base relocations, loads application DLLs, binds imports to guest exports or call-gate stubs, sets TLS slots, applies page protections. |
 | `crates/anyos-format` | built | Format detection (PE, ELF, Mach-O, universal) and the any-OS run plan. |
 | `crates/anyos-net` | built | Per-program network policy (redirects) and the `<program>.anyos.toml` profile. |
+| `crates/anyos-package` | built (identification) | Recognises installers and packages (NSIS, Inno Setup, MSI, WiX Burn, `.deb`, `.rpm`, AppImage, `.pkg`, `.dmg`, ZIP, 7-Zip) and picks the install route. |
+| `crates/anyos-env` | built | Environments: private `C:` drive, path mapping, registry store, installed-app index. |
+| `crates/anyos-install` | built (MSI, ZIP, 7-Zip) | Unpacks installers into an environment without running them; uninstall. |
 | `apps/anyos-cli` | built | `anyos inspect` (PE, ELF, Mach-O), `anyos load` (dry run), `anyos redirect`. |
-| `anyos-exec` (execution API) | next | `ExecutionBackend` trait, guest CPU context, call-gate dispatch. |
-| `anyos-exec-native`, `anyos-exec-interp`, `anyos-exec-dbt` | later | Backends: direct execution, a reference interpreter, and a translator. |
+| `crates/anyos-backend` | built | `ExecutionBackend` trait, guest CPU context (`GuestContext`, `X86Context`), `StopReason` and `GuestFault`. |
+| `crates/anyos-interp` | built (integer subset) | Portable x86/x64 interpreter backend: general-purpose integer instructions, string ops, `fs`/`gs` bases, SSE moves and SSE2 packed integers. No x87 or SSE floating point yet. |
+| `crates/anyos-win32` | built (console APIs) | Windows personality: stack, TEB/PEB, static TLS, DLL and TLS initialisation, call-gate dispatch with x64, stdcall and cdecl conventions, a cooperative thread scheduler, a handle table, and most of `kernel32` (threads, sync, heaps, virtual memory, files, environment, time, locale, resources) plus the `advapi32` registry. |
+| `crates/anyos-exec` | built (Linux ELF) | Runs Linux x86-64 ELF programs (native on Windows via syscall trapping, directly on Linux). |
+| native and translating backends | later | Direct execution on a matching CPU, and a translator. |
 | `anyos-win32-abi` + `anyos-api-*` | later | Calling conventions, struct layouts, error codes, and API providers grouped by family. |
 | `anyos-host` + `anyos-host-{linux,macos,chromeos}` | later | Host services behind one interface. |
 | `anyos-managed` | later | .NET hosting through hostfxr/CoreCLR. |
@@ -191,18 +197,42 @@ guest code and the runtime that works the same way for native execution,
 interpretation and translation. It also lets the runtime report unimplemented
 APIs by name at the moment they are first called.
 
-### 3. Execute (next milestone)
+### 3. Execute (in progress)
 
-Planned interface:
+The interface (`crates/anyos-backend`):
 
 ```rust
 pub trait ExecutionBackend {
-    fn supports(&self, guest: Machine, host: HostArch) -> bool;
-    /// Run a guest thread until it exits, faults, or reaches the call gate.
-    fn run(&mut self, thread: &mut GuestThread, mem: &mut dyn GuestMemory) -> StopReason;
+    fn supports(&self, arch: GuestArch) -> bool;
+    /// Run a guest thread until it traps, faults, or uses up `limit` instructions.
+    fn run(&mut self, ctx: &mut GuestContext, mem: &mut AddressSpace, limit: Option<u64>) -> StopReason;
 }
-pub enum StopReason { CallGate(u64), Exit(u32), Fault(GuestException), Yield }
+pub enum StopReason { Breakpoint { address: u64 }, Fault(GuestFault), InstructionLimit }
 ```
+
+Backends know nothing about Windows. A call-gate stub is a trap instruction, so
+reaching one is a `Breakpoint` inside the gate region. The Windows personality
+(`crates/anyos-win32`) looks the address up in the `CallGate`, reads the
+arguments with the right convention (Microsoft x64, or stdcall on x86), runs the
+Rust implementation, writes the result and returns to the guest's caller. The
+runtime calls into guest code (DLL entry points, TLS callbacks, the program's
+entry point) by pushing the address of a private gate stub as the return
+address, so a `Breakpoint` there means the call has returned. Memory is the
+emulated `AddressSpace` for now; a native backend will need host-mapped guest
+memory behind the same operations.
+
+Guest threads share the one backend and take turns: the run loop switches
+threads when a time slice runs out, when a thread ends, and when an API call
+has to wait. A waiting call (`WaitForSingleObject`, `EnterCriticalSection`,
+`Sleep`) leaves the thread stopped on its call-gate stub, so when the thread is
+picked again the same call runs again and re-checks what it waits for. No
+host thread ever blocks inside an API, and the order of execution is
+deterministic apart from timeouts.
+
+`anyos run app.exe` runs a Windows x86 or x64 program this way on the
+interpreter. The interpreter is checked against a real CPU:
+`tests/fixtures/src/selftest.h` is built both as a Windows program and natively,
+and the two outputs must match exactly (at -O0 through -O3).
 
 Order of work: (a) a reference **interpreter** for a small x86-64 subset, used to
 run the fixtures end to end and test API semantics deterministically; (b) a
@@ -243,10 +273,12 @@ Other macOS constraints:
 
 ### Revised milestone 3 for macOS
 
-1. **Portable interpreter backend.** Run `hello_console.exe` end to end:
-   `GetStdHandle` and `WriteFile` go through the call gate to host stdout.
-   This works on any Mac with no Rosetta or JIT entitlement, and it fixes the
-   `ExecutionBackend` and call-gate dispatch interfaces.
+1. **Portable interpreter backend.** *Done.* `hello_console.exe` (x64 and x86)
+   runs end to end: `GetStdHandle` and `WriteFile` go through the call gate to
+   host stdout. This works on any Mac with no Rosetta or JIT entitlement, and it
+   fixes the `ExecutionBackend` and call-gate dispatch interfaces. Still missing
+   for real programs: x87 and SSE floating point, cdecl APIs (`msvcrt`), a heap,
+   files, and structured exception handling.
 2. **macOS guest memory backend.** Map guest images at their Windows addresses
    with `mmap` and handle 16 KiB pages.
 3. **Rosetta spike (Apple Silicon).** Build AnyOS for x86-64, run the x64 fixture's
@@ -254,6 +286,73 @@ Other macOS constraints:
    TEB/`gs` layout.
 4. **ARM64 spike.** Measure whether `x18` survives on macOS and decide whether
    ARM64 Windows code can run natively.
+
+## Installing apps
+
+Most apps ship as installers, not as a bare `.exe`. AnyOS installs them into its
+own per-user **environment** rather than onto the host, so nothing lands in the
+host's `Applications`, `/usr` or registry-like stores.
+
+`anyos-package` recognises the package first (`anyos inspect` shows it):
+
+| Package | OS | First route | Silent switches |
+|---|---|---|---|
+| NSIS `.exe` | Windows | extract | `/S` |
+| Inno Setup `.exe` | Windows | extract | `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` |
+| MSI / MSP | Windows | extract (AnyOS reads the MSI tables itself) | `/qn` |
+| 7-Zip / ZIP self-extractor | Windows | extract | |
+| WiX Burn bundle, InstallShield | Windows | run the installer | `/quiet`, `/s` |
+| `.deb`, `.rpm`, AppImage | Linux | extract | |
+| `.pkg`, `.dmg` | macOS | extract | |
+
+Two routes, used in this order:
+
+1. **Extract.** When the payload format is documented, AnyOS unpacks it in Rust
+   and maps the installer's directories (`{app}`, `$INSTDIR`, `ProgramFilesFolder`)
+   into the environment. For MSI this also applies the `Registry` and `Shortcut`
+   tables. No guest code runs, so this works before the execution milestones.
+   Custom actions and installer scripts are skipped and reported.
+2. **Run.** Otherwise the installer runs as a guest with its silent switches, so it
+   needs the console-level Windows API (milestone 4) plus the registry,
+   shell folders, `CreateProcess` and shortcuts, but not the GUI layer.
+
+### Environments (`anyos-env`)
+
+```text
+<data dir>/envs/<name>/
+  env.toml                  name and the Windows user name apps see
+  apps.toml                 installed apps: files, folders, registry values, shortcuts
+  windows/registry.toml     registry keys and values
+  windows/drive_c/          Program Files, Program Files (x86), ProgramData,
+                            Users/<user>/AppData, Windows/System32, ...
+```
+
+The data directory is `$ANYOS_HOME`, else `~/Library/Application Support/AnyOS`
+(macOS), `%LOCALAPPDATA%\AnyOS` (Windows) or `$XDG_DATA_HOME/anyos`. Windows
+paths map to host paths through `Env::host_path`, which matches names
+case-insensitively and refuses other drives and `..`, so no package can write
+outside its environment. The same mapping will back the file APIs once programs
+run. Linux and macOS packages will get matching trees (`usr/`, `Applications/`).
+
+### What `anyos install` does today (`anyos-install`)
+
+- **MSI:** resolves the `Directory` table (standard folders follow 64-bit
+  Windows rules, so `ProgramFilesFolder` is `C:\Program Files (x86)`), writes
+  every `File` row out of its cabinet (embedded or beside the `.msi`), creates
+  `CreateFolder` folders, applies `Registry` with formatted strings expanded,
+  records `Shortcut` rows, and adds an Add/Remove Programs key. Every feature and
+  component is installed. Custom actions, conditions and tables such as
+  `ServiceInstall` or `Environment` are skipped and listed in the app's notes.
+- **ZIP / 7-Zip archives and self-extractors:** unpacked into
+  `C:\Program Files\<name>`, where the name is the archive's single top folder
+  or its file name.
+- `anyos uninstall` removes exactly what was recorded: files no other app also
+  installed, folders left empty, and the registry values and keys it created.
+- The main program is the shortcut target when there is one, else the most
+  likely `.exe` (not an uninstaller, updater or helper).
+
+Checked against the real PowerShell 7.4.5 MSI: all 912 files match the
+package's sizes and the 151 hashes it carries.
 
 ## Guest memory
 
@@ -300,8 +399,9 @@ writes (`*_raw`) marks the places where it acts as the kernel.
 |---|---|
 | 1. PE inspector (`anyos inspect`) | Done |
 | 2. PE loader (map, relocate, bind, TLS, protections) | Done (emulated guest memory) |
-| 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Next |
-| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | |
+| 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Interpreter and call-gate dispatch done; macOS guest memory next |
+| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | kernel32 and the advapi32 registry done; CRT DLLs and exceptions next |
+| 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification, environments, MSI/ZIP/7-Zip done; Inno and NSIS next |
 | 5. Basic Win32 GUI on macOS: windows, messages, input, GDI | |
 | 6. Modern .NET via hostfxr/CoreCLR | |
 | 7. Linux and ChromeOS adapters, own x86-64 to ARM64 translator | |

@@ -2,24 +2,37 @@
 //!
 //! * `anyos inspect <file>` reads a program (Windows PE in full detail; Linux ELF
 //!   and macOS Mach-O in summary) and reports what it is and what AnyOS would need
-//!   to run it. Nothing is executed.
+//!   to run it. Installers and app packages (NSIS, Inno Setup, MSI, .deb, .pkg,
+//!   ...) are recognised too. Nothing is executed.
 //! * `anyos load <file>` goes one step further: it maps the image (and application
 //!   DLLs beside it) into an emulated guest address space, relocates and binds it,
 //!   and prints the resulting process layout. Still nothing is executed.
-//! * `anyos run <file>` runs a Linux x86-64 ELF on the current host.
-//!   On Windows x64 the guest code runs natively with AnyOS intercepting Linux
-//!   syscalls. On Linux the ELF is run directly (useful for testing).
+//! * `anyos run <file>` runs a program. Windows x86 and x64 `.exe` files run on
+//!   AnyOS's portable interpreter on any host, with Windows API calls served
+//!   through the call gate. A Linux x86-64 ELF runs on an x86-64 host: natively
+//!   with Linux syscalls intercepted on Windows, directly on Linux.
+//! * `anyos install <installer>` unpacks an installer (MSI, ZIP, 7-Zip) into an
+//!   AnyOS environment; `anyos apps`, `anyos uninstall` and `anyos env` manage
+//!   what is installed. No installer code runs.
 //! * `anyos redirect ...` edits a program's own network redirects, stored in
 //!   `<program>.anyos.toml` beside it. They apply only to that program when AnyOS
 //!   runs it; the host's hosts file and DNS are never touched.
+//! * `anyos update` installs the newest AnyOS release from GitHub (checked
+//!   against its SHA-256), replacing this copy and the app beside it. Release
+//!   builds also check once a day after a command and mention a new version
+//!   on stderr; `--no-update-check` or `ANYOS_NO_UPDATE_CHECK=1` turns that off.
 
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
+use anyos_env::{AppRecord, Env};
 use anyos_exec::{run as exec_run, RunOptions};
 use anyos_format::{Detected, GuestMode, ProgramSummary};
 use anyos_loader::{BasePolicy, Binding, LoadOptions, Process};
 use anyos_net::{profile_path, AppProfile, NetPolicy};
+use anyos_package::{InstallRoute, Package, PackageKind};
 use anyos_pe::catalog::classify;
 use anyos_pe::report::{
     self, CompatibilityReport, DependencyLocation, HostArch, HostOs, HostPlatform, Status,
@@ -30,10 +43,13 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "anyos",
-    version,
+    version = anyos_update::current_version(),
     about = "AnyOS: run programs from any OS on any OS (inspector and loader preview)"
 )]
 struct Cli {
+    /// Do not look for a newer AnyOS release after this command.
+    #[arg(long, global = true)]
+    no_update_check: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -44,17 +60,89 @@ enum Command {
     Inspect(InspectArgs),
     /// Map, relocate and bind an image into an emulated guest process (dry run).
     Load(LoadArgs),
-    /// Run a Linux x86-64 ELF on this host.
+    /// Run a program: a Windows .exe (x86 or x64), or a Linux x86-64 ELF.
     Run(RunArgs),
     /// Per-program network redirects, applied inside AnyOS (not the host OS).
     #[command(subcommand)]
     Redirect(RedirectCommand),
+    /// Install an app from its installer into an AnyOS environment.
+    ///
+    /// Supports .msi packages, ZIP and 7-Zip archives, and self-extracting
+    /// ZIP/7-Zip .exe files. No installer code runs; nothing is written
+    /// outside the environment.
+    Install(InstallArgs),
+    /// List the apps installed in an environment.
+    Apps(AppsArgs),
+    /// Remove an installed app from an environment.
+    Uninstall(UninstallArgs),
+    /// List environments, or show where one lives.
+    Env(EnvArgs),
+    /// Update AnyOS to the newest release.
+    ///
+    /// Downloads this platform's release from GitHub, checks its SHA-256
+    /// against the release's SHA256SUMS, and replaces this copy of anyos and
+    /// the AnyOS app installed beside it (the whole AnyOS.app on macOS).
+    Update(UpdateArgs),
+}
+
+#[derive(Args)]
+struct UpdateArgs {
+    /// Only say whether a newer release exists; install nothing.
+    #[arg(long)]
+    check: bool,
+}
+
+#[derive(Args)]
+struct EnvOpt {
+    /// Environment to use (created when missing).
+    #[arg(long = "env", default_value = anyos_env::DEFAULT_ENV)]
+    name: String,
+}
+
+#[derive(Args)]
+struct InstallArgs {
+    /// The installer or package.
+    installer: PathBuf,
+    #[command(flatten)]
+    env: EnvOpt,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct AppsArgs {
+    #[command(flatten)]
+    env: EnvOpt,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct UninstallArgs {
+    /// App id or name, as `anyos apps` shows it.
+    app: String,
+    #[command(flatten)]
+    env: EnvOpt,
+}
+
+#[derive(Args)]
+struct EnvArgs {
+    /// Show this environment's folders instead of listing all of them.
+    name: Option<String>,
 }
 
 #[derive(Args)]
 struct RunArgs {
-    /// Path to the Linux ELF executable.
+    /// Path to the program (Windows .exe or Linux ELF).
     program: PathBuf,
+    /// Windows programs: print each Windows API call and its result to stderr.
+    #[arg(long)]
+    trace: bool,
+    /// Windows programs: the environment whose C: drive and registry the
+    /// program sees. Default: the environment the program is installed in,
+    /// otherwise the default environment if it exists.
+    #[arg(long = "env")]
+    env: Option<String>,
     /// Arguments passed to the guest program (argv[1..]).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -148,12 +236,24 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
     let cli = Cli::parse();
+    if let Ok(layout) = anyos_update::Layout::current() {
+        anyos_update::cleanup_leftovers(&layout);
+    }
+    let check_after = !cli.no_update_check && !matches!(cli.command, Command::Update(_));
     let result = match cli.command {
         Command::Inspect(a) => inspect(a),
         Command::Load(a) => load(a),
         Command::Run(a) => run_guest(a),
         Command::Redirect(c) => redirect(c),
+        Command::Install(a) => install_app(a),
+        Command::Apps(a) => list_apps(a),
+        Command::Uninstall(a) => uninstall_app(a),
+        Command::Env(a) => env_info(a),
+        Command::Update(a) => update(a),
     };
+    if check_after {
+        update_notice();
+    }
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
@@ -163,8 +263,93 @@ fn main() -> ExitCode {
     }
 }
 
+fn update_cache() -> Option<anyos_update::CheckCache> {
+    let dir = anyos_env::data_dir().ok()?;
+    Some(anyos_update::CheckCache::new(dir.join("update-check")))
+}
+
+/// Once a day, in release builds and only when someone is watching stderr,
+/// asks GitHub for the latest release and mentions it if it is newer.
+fn update_notice() {
+    if !anyos_update::auto_check_enabled() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    let Some(cache) = update_cache() else { return };
+    if cache.is_due() {
+        match anyos_update::check(Duration::from_secs(3)) {
+            Ok(u) => cache.record(u.as_ref().map(|u| &u.version)),
+            // Offline: keep what we knew and try again tomorrow.
+            Err(_) => cache.record(cache.newer_version().as_ref()),
+        }
+    }
+    if let Some(v) = cache.newer_version() {
+        eprintln!(
+            "\nanyos: AnyOS {v} is available (this is {}). Run `anyos update` to install it.",
+            anyos_update::current_version()
+        );
+    }
+}
+
+fn update(a: UpdateArgs) -> Result<(), String> {
+    let current = anyos_update::current_version();
+    println!("AnyOS {current}: checking for a newer release...");
+    let found = anyos_update::check(Duration::from_secs(30)).map_err(|e| e.to_string())?;
+    if let Some(cache) = update_cache() {
+        cache.record(found.as_ref().map(|u| &u.version));
+    }
+    let Some(u) = found else {
+        println!("This is the latest version.");
+        return Ok(());
+    };
+    println!("AnyOS {} is available: {}", u.version, u.page_url);
+    if a.check {
+        println!("Run `anyos update` to install it.");
+        return Ok(());
+    }
+    if !anyos_update::is_release_build() {
+        eprintln!("note: this is a local build; it will be replaced by the release build.");
+    }
+
+    let show = std::io::stderr().is_terminal();
+    let mut last_pct = None;
+    let installed = anyos_update::install(&u, |done, total| {
+        let Some(total) = total.filter(|t| *t > 0 && show) else {
+            return;
+        };
+        let pct = done * 100 / total;
+        if last_pct != Some(pct) {
+            last_pct = Some(pct);
+            eprint!("\rDownloading {} ... {pct}%", u.archive_name);
+            let _ = std::io::stderr().flush();
+        }
+    });
+    if last_pct.is_some() {
+        eprintln!();
+    }
+    let installed = installed.map_err(|e| {
+        if e.is_permission_denied() {
+            format!(
+                "{e}\nAnyOS is installed in a folder you cannot write to; \
+                 run the update again as an administrator (e.g. with sudo)."
+            )
+        } else {
+            e.to_string()
+        }
+    })?;
+    println!(
+        "Updated to AnyOS {} in {} ({}).",
+        installed.version,
+        installed.layout.dir.display(),
+        installed.replaced.join(", ")
+    );
+    Ok(())
+}
+
 fn run_guest(a: RunArgs) -> Result<(), String> {
     let bytes = std::fs::read(&a.program).map_err(|e| format!("{}: {e}", a.program.display()))?;
+    if bytes.starts_with(b"MZ") {
+        return run_windows(&a);
+    }
 
     let name = a.program.display().to_string();
     let mut argv: Vec<&str> = vec![&name];
@@ -183,6 +368,259 @@ fn run_guest(a: RunArgs) -> Result<(), String> {
 
     if result.exit_code != 0 {
         return Err(format!("guest exited with code {}", result.exit_code));
+    }
+    Ok(())
+}
+
+/// Prefix of host environment variables passed into a Windows program's
+/// environment (how a parent's CreateProcess environment reaches a child).
+const GUEST_ENV_PREFIX: &str = "ANYOS_GUEST_ENV_";
+
+/// The environment a Windows program runs in: the one named, the one whose
+/// drive the program is in, or the default one when it already exists.
+fn env_for_program(name: Option<&str>, program: &Path) -> Result<Option<Env>, String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    if let Some(name) = name {
+        return Env::open_or_create(&dir, name)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    let names = anyos_env::list(&dir).unwrap_or_default();
+    for n in &names {
+        let Ok(env) = Env::open_or_create(&dir, n) else {
+            continue;
+        };
+        let drive = std::fs::canonicalize(env.drive_c()).unwrap_or_else(|_| env.drive_c());
+        if program.starts_with(&drive) {
+            return Ok(Some(env));
+        }
+    }
+    if names.iter().any(|n| n == anyos_env::DEFAULT_ENV) {
+        return Env::open_or_create(&dir, anyos_env::DEFAULT_ENV)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    Ok(None)
+}
+
+fn run_windows(a: &RunArgs) -> Result<(), String> {
+    let env = env_for_program(a.env.as_deref(), &a.program)?;
+    // CreateProcess in the guest starts another `anyos run` in the same environment.
+    let mut child_runner = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        child_runner.push(exe.into_os_string());
+        child_runner.push("--no-update-check".into());
+        child_runner.push("run".into());
+        if let Some(env) = &env {
+            child_runner.push("--env".into());
+            child_runner.push(env.name().into());
+        }
+    }
+    let guest_env = std::env::vars()
+        .filter_map(|(k, v)| Some((k.strip_prefix(GUEST_ENV_PREFIX)?.to_string(), v)))
+        .collect();
+    let opts = anyos_win32::RunOptions {
+        args: a.args.clone(),
+        trace: a.trace,
+        drive_c: env.as_ref().map(Env::drive_c),
+        registry_file: env.as_ref().map(Env::registry_path),
+        user: env.as_ref().map(|e| e.user().to_string()),
+        env: guest_env,
+        child_runner,
+        ..Default::default()
+    };
+    let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
+    let r = anyos_win32::run_executable(
+        &a.program,
+        &opts,
+        anyos_win32::Stdio {
+            stdout: &mut out,
+            stderr: &mut err,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    if a.trace {
+        eprintln!(
+            "[anyos] exit code {} after {} instructions and {} API calls",
+            r.exit_code, r.instructions, r.api_calls
+        );
+    }
+    if r.exit_code != 0 {
+        return Err(format!("program exited with code {}", r.exit_code));
+    }
+    Ok(())
+}
+
+fn open_env(name: &str) -> Result<Env, String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    Env::open_or_create(&dir, name).map_err(|e| e.to_string())
+}
+
+fn install_app(a: InstallArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let r = anyos_install::install(&env, &a.installer).map_err(|e| e.to_string())?;
+    if a.json {
+        let out = serde_json::json!({
+            "env": env.name(),
+            "app": app_json(&env, &r.app),
+            "bytes_written": r.bytes_written,
+            "registry_values": r.registry_values,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let app = &r.app;
+    println!(
+        "Installed {}{} into environment \"{}\"",
+        app.name,
+        app.version
+            .as_ref()
+            .map(|v| format!(" {v}"))
+            .unwrap_or_default(),
+        env.name()
+    );
+    println!("  Id:              {}", app.id);
+    println!("  From:            {} ({})", app.source, app.package);
+    println!(
+        "  Files:           {} ({} bytes)",
+        app.files.len(),
+        r.bytes_written
+    );
+    if r.registry_values > 0 {
+        println!("  Registry values: {}", r.registry_values);
+    }
+    print_app_paths(&env, app);
+    for s in &app.shortcuts {
+        println!("  Shortcut:        {} -> {}", s.name, s.target);
+    }
+    if !app.notes.is_empty() {
+        println!("\nSkipped");
+        for n in &app.notes {
+            println!("  - {n}");
+        }
+    }
+    if let Some(main) = app.main.as_deref().and_then(|m| env.host_path(m).ok()) {
+        println!("\nRun it with: anyos run \"{}\"", main.display());
+    }
+    Ok(())
+}
+
+/// `2026-10-14 06:15 UTC` from what the install index stores.
+fn install_time(app: &AppRecord) -> Option<String> {
+    let t = anyos_env::clock::parse_rfc3339(app.installed_at.as_deref()?)?;
+    let s = anyos_env::clock::format_rfc3339(t);
+    Some(format!("{} {} UTC", &s[..10], &s[11..16]))
+}
+
+fn print_app_paths(env: &Env, app: &AppRecord) {
+    match (install_time(app), app.size_bytes) {
+        (Some(t), Some(n)) => println!("  Installed:       {t}, {}", human_bytes(n)),
+        (Some(t), None) => println!("  Installed:       {t}"),
+        _ => {}
+    }
+    let host = |w: &str| {
+        env.host_path(w)
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    };
+    if let Some(d) = &app.install_dir {
+        println!("  Folder:          {d}");
+        println!("                   {}", host(d));
+    }
+    if let Some(m) = &app.main {
+        println!("  Program:         {m}");
+    }
+}
+
+fn app_json(env: &Env, app: &AppRecord) -> serde_json::Value {
+    let mut v = serde_json::to_value(app).unwrap_or_default();
+    if let Some(m) = &app.main {
+        v["main_host_path"] =
+            serde_json::json!(env.host_path(m).map(|p| p.display().to_string()).ok());
+    }
+    v
+}
+
+fn list_apps(a: AppsArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let index = env.apps().map_err(|e| e.to_string())?;
+    if a.json {
+        let apps: Vec<_> = index.apps.iter().map(|app| app_json(&env, app)).collect();
+        let out = serde_json::json!({ "env": env.name(), "apps": apps });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if index.apps.is_empty() {
+        println!("No apps installed in environment \"{}\".", env.name());
+        return Ok(());
+    }
+    println!("Apps in environment \"{}\"", env.name());
+    for app in index.by_install_date() {
+        println!(
+            "\n{} ({}){}",
+            app.name,
+            app.id,
+            app.version
+                .as_ref()
+                .map(|v| format!(", version {v}"))
+                .unwrap_or_default()
+        );
+        print_app_paths(&env, app);
+    }
+    Ok(())
+}
+
+fn uninstall_app(a: UninstallArgs) -> Result<(), String> {
+    let env = open_env(&a.env.name)?;
+    let r = anyos_install::uninstall(&env, &a.app).map_err(|e| e.to_string())?;
+    println!(
+        "Removed {} from environment \"{}\": {} file(s){}{}",
+        r.app.name,
+        env.name(),
+        r.files_removed,
+        if r.files_shared > 0 {
+            format!(", {} kept for other apps", r.files_shared)
+        } else {
+            String::new()
+        },
+        if r.registry_keys_removed > 0 {
+            format!(", {} registry key(s)", r.registry_keys_removed)
+        } else {
+            String::new()
+        }
+    );
+    Ok(())
+}
+
+fn env_info(a: EnvArgs) -> Result<(), String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    match a.name {
+        None => {
+            let names = anyos_env::list(&dir).map_err(|e| e.to_string())?;
+            if names.is_empty() {
+                println!("No environments yet. `anyos install` creates \"default\".");
+            }
+            for n in names {
+                println!("{n}");
+            }
+            println!("\nData folder: {}", dir.display());
+        }
+        Some(name) => {
+            let env = open_env(&name)?;
+            let apps = env.apps().map_err(|e| e.to_string())?;
+            println!("Environment \"{}\"", env.name());
+            println!("  Folder:          {}", env.root().display());
+            println!("  C: drive:        {}", env.drive_c().display());
+            println!("  Windows user:    {}", env.user());
+            println!("  Apps installed:  {}", apps.apps.len());
+        }
     }
     Ok(())
 }
@@ -350,13 +788,22 @@ fn redirects_json(policy: &NetPolicy) -> serde_json::Value {
 
 fn inspect(a: InspectArgs) -> Result<(), String> {
     let bytes = std::fs::read(&a.file).map_err(|e| format!("{}: {e}", a.file.display()))?;
-    let detected =
-        anyos_format::detect(&bytes).map_err(|e| format!("{}: {e}", a.file.display()))?;
+    let detected = match anyos_format::detect(&bytes) {
+        Ok(d) => d,
+        Err(e) => match anyos_package::identify(&bytes, None) {
+            Some(package) => return inspect_package(&a, bytes.len(), &package),
+            None => return Err(format!("{}: {e}", a.file.display())),
+        },
+    };
     let policy = load_policy(&a.file)?;
     let image = match detected {
         Detected::Pe(image) => *image,
-        Detected::Other(summary) => return inspect_other(&a, bytes.len(), &summary, &policy),
+        Detected::Other(summary) => {
+            let package = anyos_package::identify(&bytes, None);
+            return inspect_other(&a, bytes.len(), &summary, package.as_ref(), &policy);
+        }
     };
+    let package = anyos_package::identify(&bytes, Some(&image));
     let report = report::build(&image, host_platform(&a), &beside(&a.file));
 
     if a.json {
@@ -368,6 +815,7 @@ fn inspect(a: InspectArgs) -> Result<(), String> {
             "file": a.file.display().to_string(),
             "image": img,
             "report": report,
+            "package": package,
             "redirects": redirects_json(&policy),
         });
         println!(
@@ -394,16 +842,72 @@ fn inspect(a: InspectArgs) -> Result<(), String> {
         }
     }
     print_report(&report);
+    if let Some(p) = &package {
+        print_package(p);
+    }
     if !policy.is_empty() {
         print_redirects(&a.file, &policy);
     }
     Ok(())
 }
 
+fn inspect_package(a: &InspectArgs, size: usize, p: &Package) -> Result<(), String> {
+    if a.json {
+        let out = serde_json::json!({
+            "file": a.file.display().to_string(),
+            "package": p,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    println!("AnyOS executable inspector");
+    println!("  File:            {} ({size} bytes)", file_name(&a.file));
+    print_package(p);
+    Ok(())
+}
+
+fn print_package(p: &Package) {
+    println!("\nInstaller");
+    println!(
+        "  Kind:            {} (installs {} software)",
+        p.kind.display_name(),
+        p.kind.os().display_name()
+    );
+    if let Some(off) = p.payload_offset {
+        println!("  Payload at:      0x{off:x}");
+    }
+    let route = match p.kind.route() {
+        InstallRoute::Extract => "unpack the payload directly (no guest code runs)",
+        InstallRoute::RunInstaller => "run the installer as a guest program",
+    };
+    println!("  AnyOS route:     {route}");
+    let silent = p.kind.silent_args();
+    if !silent.is_empty() {
+        println!("  Silent install:  {}", silent.join(" "));
+    }
+    if !matches!(
+        p.kind,
+        PackageKind::Msi
+            | PackageKind::Nsis
+            | PackageKind::Zip
+            | PackageKind::ZipSfx
+            | PackageKind::SevenZip
+            | PackageKind::SevenZipSfx
+            | PackageKind::Deb
+            | PackageKind::MacPkg
+    ) {
+        println!("  `anyos install` does not support this kind yet.");
+    }
+}
+
 fn inspect_other(
     a: &InspectArgs,
     size: usize,
     p: &ProgramSummary,
+    package: Option<&Package>,
     policy: &NetPolicy,
 ) -> Result<(), String> {
     let plan = anyos_format::plan(p, host_platform(a));
@@ -412,6 +916,7 @@ fn inspect_other(
             "file": a.file.display().to_string(),
             "program": p,
             "plan": plan,
+            "package": package,
             "redirects": redirects_json(policy),
         });
         println!(
@@ -475,6 +980,9 @@ fn inspect_other(
     println!("  {}", plan.note);
     if let Some(layer) = plan.personality {
         println!("  OS layer needed: {layer}");
+    }
+    if let Some(pkg) = package {
+        print_package(pkg);
     }
     if !policy.is_empty() {
         print_redirects(&a.file, policy);
@@ -866,4 +1374,18 @@ fn load(a: LoadArgs) -> Result<(), String> {
         "\nNext step: an execution backend (not built yet) would start at the entry point above."
     );
     Ok(())
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if n < 1024 {
+        return format!("{n} bytes");
+    }
+    let mut v = n as f64 / 1024.0;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    format!("{v:.1} {}", UNITS[unit])
 }

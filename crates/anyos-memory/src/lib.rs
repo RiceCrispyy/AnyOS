@@ -190,7 +190,7 @@ impl AddressSpace {
         if size == 0 {
             return Err(MemoryError::ZeroSize);
         }
-        if base % PAGE_SIZE != 0 {
+        if !base.is_multiple_of(PAGE_SIZE) {
             return Err(MemoryError::Misaligned(base));
         }
         let end = base.checked_add(size);

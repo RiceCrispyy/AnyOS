@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 **Added**
 
+- Self-update (`anyos-update`). `anyos update` installs the newest GitHub release
+  for this platform after checking it against `SHA256SUMS`; `--check` only
+  reports. The desktop app checks on start and offers **Update and restart**,
+  plus a **Check for updates** button. The running copy is swapped in place:
+  `anyos` and `anyos-gui` beside it, the whole `AnyOS.app` on macOS, and on
+  Windows the running `.exe` is renamed to `.old` and removed on the next launch.
+  `--no-update-check` or `ANYOS_NO_UPDATE_CHECK=1` turns automatic checks off.
+  Release builds now report the tag's version (`anyos --version`).
+- `anyos-gui` — a desktop app for macOS, Windows and Linux (egui). Drop or choose
+  a program (Windows `.exe`, Linux ELF, macOS Mach-O or `.app`, installers) to see
+  its format, target OS and CPU and how AnyOS would run it, then run it and watch
+  its output, with Stop and an option to log Windows API calls. Release archives
+  include it, as `AnyOS.app` on macOS.
+- `anyos run app.exe` — run Windows x86 and x64 console programs on a portable
+  interpreter (`anyos-interp`) on any host, including Apple Silicon Macs. Windows
+  API calls go through the call gate to Rust implementations (`anyos-win32`);
+  the first are `ExitProcess`, `GetStdHandle`, `WriteFile`, `WriteConsoleA/W`,
+  `GetLastError`/`SetLastError`, `GetCommandLineA/W`, `GetModuleHandleA/W` and
+  the current process/thread queries. DLL entry points and TLS callbacks run
+  before the program. `--trace` logs every API call. Unsupported APIs and
+  instructions stop the run with a message naming them.
+- `anyos-backend` — the `ExecutionBackend` trait shared by all execution backends.
+- Release workflow: pushing a `v*` tag builds `anyos` for Linux x86-64, Windows
+  x86-64 and macOS (universal) and attaches the archives and `SHA256SUMS` to the
+  GitHub release.
+
 - Standalone Rust runtime that can inspect and load Windows PE programs into an
   emulated guest process: map, relocate, bind imports, set up TLS, page protections,
   and an API call gate. ([README](README.md) "Quick start" and "Layout".)

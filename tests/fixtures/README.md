@@ -10,6 +10,9 @@
 | `hello_gui.exe` | GUI subsystem, delay-loaded `user32.dll` |
 | `exports_dll.dll` | DLL entry point, named exports, a NONAME ordinal export (`@7`), a data export, ordinal base 7 |
 | `uses_dll.exe` | imports from `exports_dll.dll` by name and by ordinal |
+| `dynload.exe` | run-time linking: `LoadLibraryA` of `exports_dll.dll`, `GetProcAddress` by name and ordinal, `GetModuleHandleA`, `GetModuleFileNameA`, `FreeLibrary`; exit code `0x7FF` when every check passes |
+| `apitest.exe` (x64, x86) | kernel32, user32 and advapi32 behaviour checked from inside the guest: heaps, virtual memory, TLS, threads with events and critical sections, semaphores, named mutexes, files and `FindFirstFile`, `wsprintf`, code pages, the registry, time, the environment, system information, `FormatMessage`; prints `ok` and exits with 0 when every check passes |
+| `selftest.exe` (x64, x86) | interpreter self-test; `selftest.expected` is the same code's output on a real CPU. Built by `src/build-selftest.sh`. |
 
 `bin/other/` holds the same tiny C program (`src/hello_unix.c`) built for other
 OSes by `src/build-other.sh` (zig cc, llvm-lipo): `linux-x64` and `linux-arm64`
@@ -18,4 +21,5 @@ and `macos-universal` (both slices). They exercise `anyos-format` detection and
 planning.
 
 `third_party/` contains one small, unmodified, MIT-licensed .NET assembly used as
-managed-code input. None of these files are ever executed by the tests.
+managed-code input. The Windows fixtures are executed only by AnyOS's own
+interpreter (`anyos-win32` tests), never natively.
