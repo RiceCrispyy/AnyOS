@@ -242,6 +242,28 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
     for key in &installed.keys {
         note_key(&mut registry, key);
     }
+
+    let id = index.unused_id(&product.name);
+    let now = anyos_env::clock::unix_now();
+    // Windows lists installed programs from the Uninstall key, so programs that
+    // look there (and Settings > Apps) see this one too. MSI and most NSIS
+    // installers write their own entry; add one only when they did not.
+    let has_entry = installed
+        .registry
+        .iter()
+        .map(|(k, _, _)| k)
+        .chain(&installed.keys)
+        .any(|k| is_uninstall_entry(k));
+    if !has_entry {
+        let key = format!(r"{UNINSTALL_KEY}\AnyOS-{id}");
+        note_key(&mut registry, &key);
+        for (name, value) in
+            uninstall_entry(&product, installed.install_dir.as_deref(), w.bytes, now)
+        {
+            registry.set(&key, name, value);
+            values.push([anyos_env::registry::normalize_key(&key), name.to_string()]);
+        }
+    }
     registry.save(&env.registry_path())?;
 
     let main = installed
@@ -249,7 +271,7 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         .clone()
         .or_else(|| guess_main(&w.files, &product.name));
     let app = AppRecord {
-        id: index.unused_id(&product.name),
+        id,
         name: product.name.clone(),
         version: product.version.clone(),
         publisher: product.publisher.clone(),
@@ -262,6 +284,8 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         folders: w.folders,
         registry_keys: created_keys,
         registry_values: values,
+        installed_at: Some(anyos_env::clock::format_rfc3339(now)),
+        size_bytes: Some(w.bytes),
         notes: w.notes,
     };
     index.add(app.clone());
@@ -271,6 +295,50 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         bytes_written: w.bytes,
         registry_values: installed.registry.len(),
     })
+}
+
+const UNINSTALL_KEY: &str =
+    r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall";
+
+fn is_uninstall_entry(key: &str) -> bool {
+    let key = anyos_env::registry::normalize_key(key).to_ascii_lowercase();
+    ["hkey_local_machine", "hkey_current_user"]
+        .iter()
+        .any(|root| {
+            let prefix = format!(r"{root}\software\microsoft\windows\currentversion\uninstall\");
+            key.starts_with(&prefix)
+                || key.starts_with(&prefix.replace(r"\software\", r"\software\wow6432node\"))
+        })
+}
+
+/// The values Windows' "Programs and Features" reads for an installed app.
+fn uninstall_entry(
+    product: &Product,
+    install_dir: Option<&str>,
+    bytes: u64,
+    unix: i64,
+) -> Vec<(&'static str, RegValue)> {
+    let (y, m, d) = anyos_env::clock::civil_from_days(unix.div_euclid(86_400));
+    let mut v = vec![
+        ("DisplayName", RegValue::Sz(product.name.clone())),
+        ("InstallDate", RegValue::Sz(format!("{y:04}{m:02}{d:02}"))),
+        (
+            "EstimatedSize",
+            RegValue::Dword(bytes.div_ceil(1024).min(u32::MAX as u64) as u32),
+        ),
+        ("NoModify", RegValue::Dword(1)),
+        ("NoRepair", RegValue::Dword(1)),
+    ];
+    if let Some(ver) = &product.version {
+        v.push(("DisplayVersion", RegValue::Sz(ver.clone())));
+    }
+    if let Some(p) = &product.publisher {
+        v.push(("Publisher", RegValue::Sz(p.clone())));
+    }
+    if let Some(dir) = install_dir {
+        v.push(("InstallLocation", RegValue::Sz(dir.to_string())));
+    }
+    v
 }
 
 /// Remove an installed app's files, registry keys and index entry.

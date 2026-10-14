@@ -450,7 +450,19 @@ fn install_app(a: InstallArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// `2026-10-14 06:15 UTC` from what the install index stores.
+fn install_time(app: &AppRecord) -> Option<String> {
+    let t = anyos_env::clock::parse_rfc3339(app.installed_at.as_deref()?)?;
+    let s = anyos_env::clock::format_rfc3339(t);
+    Some(format!("{} {} UTC", &s[..10], &s[11..16]))
+}
+
 fn print_app_paths(env: &Env, app: &AppRecord) {
+    match (install_time(app), app.size_bytes) {
+        (Some(t), Some(n)) => println!("  Installed:       {t}, {}", human_bytes(n)),
+        (Some(t), None) => println!("  Installed:       {t}"),
+        _ => {}
+    }
     let host = |w: &str| {
         env.host_path(w)
             .map(|p| p.display().to_string())
@@ -491,7 +503,7 @@ fn list_apps(a: AppsArgs) -> Result<(), String> {
         return Ok(());
     }
     println!("Apps in environment \"{}\"", env.name());
-    for app in &index.apps {
+    for app in index.by_install_date() {
         println!(
             "\n{} ({}){}",
             app.name,
@@ -1303,4 +1315,18 @@ fn load(a: LoadArgs) -> Result<(), String> {
         "\nNext step: an execution backend (not built yet) would start at the entry point above."
     );
     Ok(())
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if n < 1024 {
+        return format!("{n} bytes");
+    }
+    let mut v = n as f64 / 1024.0;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    format!("{v:.1} {}", UNITS[unit])
 }

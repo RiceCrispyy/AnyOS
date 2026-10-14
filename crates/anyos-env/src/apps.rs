@@ -52,6 +52,13 @@ pub struct AppRecord {
     /// Registry values this install wrote, as `[key, name]`; removed on uninstall.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub registry_values: Vec<[String; 2]>,
+    /// When the app was installed, as an RFC 3339 UTC time
+    /// (`2026-10-14T06:15:05Z`). Apps installed before AnyOS recorded this have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<String>,
+    /// Bytes the install wrote to the C: drive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     /// Things the installer would have done that AnyOS skipped.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
@@ -120,6 +127,13 @@ impl AppIndex {
         self.apps.sort_by(|a, b| a.id.cmp(&b.id));
     }
 
+    /// Apps, most recently installed first; apps without a date come last.
+    pub fn by_install_date(&self) -> Vec<&AppRecord> {
+        let mut v: Vec<&AppRecord> = self.apps.iter().collect();
+        v.sort_by(|a, b| b.installed_at.cmp(&a.installed_at));
+        v
+    }
+
     pub fn remove(&mut self, id: &str) -> Option<AppRecord> {
         let i = self.apps.iter().position(|a| a.id == id)?;
         Some(self.apps.remove(i))
@@ -164,6 +178,8 @@ mod tests {
                 working_dir: None,
             }],
             files: vec![r"C:\Program Files\A\a.exe".into()],
+            installed_at: Some("2026-10-14T06:15:05Z".into()),
+            size_bytes: Some(4096),
             ..Default::default()
         });
         idx.save(&path).unwrap();

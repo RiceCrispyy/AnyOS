@@ -9,6 +9,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod analysis;
+mod installed;
 mod runner;
 mod updater;
 
@@ -79,6 +80,7 @@ struct AnyosApp {
     job: Option<Job>,
     log: Vec<(Stream, String)>,
     updater: Updater,
+    installed: Vec<installed::InstalledApp>,
 }
 
 impl AnyosApp {
@@ -92,6 +94,7 @@ impl AnyosApp {
             job: None,
             log: Vec::new(),
             updater: Updater::new(),
+            installed: installed::load(),
         }
     }
 
@@ -148,6 +151,8 @@ impl AnyosApp {
                     };
                     self.log.push((Stream::Info, msg));
                     self.job = None;
+                    // An install may have added an app.
+                    self.installed = installed::load();
                     break;
                 }
             }
@@ -216,6 +221,10 @@ impl eframe::App for AnyosApp {
             }
             match &self.analysis {
                 None => {
+                    if let Some(p) = self.installed_list(ui) {
+                        self.open(&p);
+                        return;
+                    }
                     if drop_zone(ui, "Drop a program here, or click to choose one", false).clicked()
                     {
                         self.pick_file();
@@ -237,6 +246,42 @@ impl eframe::App for AnyosApp {
 }
 
 impl AnyosApp {
+    /// The installed apps, newest first, above the drop zone. Returns the
+    /// program to open when one is picked.
+    fn installed_list(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
+        if self.installed.is_empty() {
+            return None;
+        }
+        let mut picked = None;
+        ui.label(RichText::new("Installed apps").strong());
+        egui::ScrollArea::vertical()
+            .max_height(ui.available_height() * 0.45)
+            .show(ui, |ui| {
+                for app in &self.installed {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            let title = match &app.version {
+                                Some(v) => format!("{} {v}", app.name),
+                                None => app.name.clone(),
+                            };
+                            ui.label(RichText::new(title).strong());
+                            ui.label(RichText::new(&app.detail).weak());
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let open = ui
+                                .add_enabled(app.program.is_some(), egui::Button::new("Open"))
+                                .on_disabled_hover_text("The installer did not name a program.");
+                            if open.clicked() {
+                                picked = app.program.clone();
+                            }
+                        });
+                    });
+                    ui.separator();
+                }
+            });
+        picked
+    }
+
     /// The line under the header about updates, when there is something to say.
     fn update_bar(&mut self, ui: &mut egui::Ui) {
         use updater::State;
@@ -494,7 +539,7 @@ fn describe(cmd: &std::process::Command) -> String {
     s
 }
 
-fn human_size(n: u64) -> String {
+pub(crate) fn human_size(n: u64) -> String {
     match n {
         0..1024 => format!("{n} bytes"),
         1024..1_048_576 => format!("{:.1} KB", n as f64 / 1024.0),
