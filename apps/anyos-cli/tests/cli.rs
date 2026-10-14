@@ -167,3 +167,32 @@ fn inspect_handles_linux_and_mac_programs() {
     assert_eq!(v["program"]["slices"].as_array().unwrap().len(), 2);
     assert_eq!(v["plan"]["mode"], "native_cpu");
 }
+
+#[test]
+fn inspect_recognises_installers() {
+    let dir = std::env::temp_dir().join(format!("anyos-cli-installer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // A PE with an NSIS first header appended, like Steam's setup program.
+    let mut exe = std::fs::read(fixture("bin/x64/hello_console.exe")).unwrap();
+    exe.extend_from_slice(&[0u8; 4]);
+    exe.extend_from_slice(b"\xEF\xBE\xAD\xDENullsoftInst");
+    let setup = dir.join("setup.exe");
+    std::fs::write(&setup, &exe).unwrap();
+    let o = anyos(&["inspect", setup.to_str().unwrap()]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let out = stdout(&o);
+    for want in ["NSIS installer", "Silent install:  /S", "PE32+ executable"] {
+        assert!(out.contains(want), "missing {want:?} in:\n{out}");
+    }
+
+    // A non-executable package is described instead of rejected.
+    let deb = dir.join("tool.deb");
+    std::fs::write(&deb, b"!<arch>\ndebian-binary   0").unwrap();
+    let o = anyos(&["inspect", "--json", deb.to_str().unwrap()]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["package"]["kind"], "Deb");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

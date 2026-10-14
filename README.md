@@ -21,6 +21,7 @@ cargo build --release
 ./target/release/anyos load --rebase path/to/app.exe    # force relocation
 ./target/release/anyos inspect --host macos-arm64 app.exe  # plan for another host
 ./target/release/anyos inspect some-linux-program          # ELF and Mach-O work too
+./target/release/anyos inspect setup.exe                   # installers: NSIS, Inno, MSI, .deb, .pkg, ...
 ```
 
 ### Per-program network redirects
@@ -61,6 +62,7 @@ crates/anyos-memory   guest address space: regions, page protections, checked ac
 crates/anyos-loader   process assembly: map, relocate, load DLLs, bind, TLS, protect; API call gate
 crates/anyos-format   format detection (PE, ELF, Mach-O incl. universal) and any-OS run plan
 crates/anyos-net      per-program network policy (redirects) and the <program>.anyos.toml profile
+crates/anyos-package  installer and package identification (NSIS, Inno, MSI, .deb, .pkg, ...)
 apps/anyos-cli        the `anyos` command
 tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux and macOS + build scripts
 docs/architecture.md  design, interfaces, security model, roadmap

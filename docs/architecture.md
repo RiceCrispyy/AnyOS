@@ -105,6 +105,7 @@ edits and tests profiles today.
 | `crates/anyos-loader` | built | `Process`: maps images, applies base relocations, loads application DLLs, binds imports to guest exports or call-gate stubs, sets TLS slots, applies page protections. |
 | `crates/anyos-format` | built | Format detection (PE, ELF, Mach-O, universal) and the any-OS run plan. |
 | `crates/anyos-net` | built | Per-program network policy (redirects) and the `<program>.anyos.toml` profile. |
+| `crates/anyos-package` | built (identification) | Recognises installers and packages (NSIS, Inno Setup, MSI, WiX Burn, `.deb`, `.rpm`, AppImage, `.pkg`, `.dmg`) and picks the install route. |
 | `apps/anyos-cli` | built | `anyos inspect` (PE, ELF, Mach-O), `anyos load` (dry run), `anyos redirect`. |
 | `anyos-exec` (execution API) | next | `ExecutionBackend` trait, guest CPU context, call-gate dispatch. |
 | `anyos-exec-native`, `anyos-exec-interp`, `anyos-exec-dbt` | later | Backends: direct execution, a reference interpreter, and a translator. |
@@ -255,6 +256,40 @@ Other macOS constraints:
 4. **ARM64 spike.** Measure whether `x18` survives on macOS and decide whether
    ARM64 Windows code can run natively.
 
+## Installing apps
+
+Most apps ship as installers, not as a bare `.exe`. AnyOS installs them into its
+own per-user **environment** rather than onto the host, so nothing lands in the
+host's `Applications`, `/usr` or registry-like stores.
+
+`anyos-package` recognises the package first (`anyos inspect` shows it):
+
+| Package | OS | First route | Silent switches |
+|---|---|---|---|
+| NSIS `.exe` | Windows | extract | `/S` |
+| Inno Setup `.exe` | Windows | extract | `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` |
+| MSI / MSP | Windows | extract (AnyOS reads the MSI tables itself) | `/qn` |
+| 7-Zip / ZIP self-extractor | Windows | extract | |
+| WiX Burn bundle, InstallShield | Windows | run the installer | `/quiet`, `/s` |
+| `.deb`, `.rpm`, AppImage | Linux | extract | |
+| `.pkg`, `.dmg` | macOS | extract | |
+
+Two routes, used in this order:
+
+1. **Extract.** When the payload format is documented, AnyOS unpacks it in Rust
+   and maps the installer's directories (`{app}`, `$INSTDIR`, `ProgramFilesFolder`)
+   into the environment. For MSI this also applies the `Registry` and `Shortcut`
+   tables. No guest code runs, so this works before the execution milestones.
+   Custom actions and installer scripts are skipped and reported.
+2. **Run.** Otherwise the installer runs as a guest with its silent switches, so it
+   needs the console-level Windows API (milestone 4) plus the registry,
+   shell folders, `CreateProcess` and shortcuts, but not the GUI layer.
+
+An environment is a directory under the AnyOS data directory with a `drive_c`
+tree (`Program Files`, `ProgramData`, `Users/<name>/AppData`), a registry store,
+and an index of installed apps that `anyos run` and an uninstaller use. Linux and
+macOS packages get the matching tree (`usr/`, `Applications/`).
+
 ## Guest memory
 
 `anyos-memory` currently stores guest memory in host heap buffers. This is
@@ -302,6 +337,7 @@ writes (`*_raw`) marks the places where it acts as the kernel.
 | 2. PE loader (map, relocate, bind, TLS, protections) | Done (emulated guest memory) |
 | 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Next |
 | 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | |
+| 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification done |
 | 5. Basic Win32 GUI on macOS: windows, messages, input, GDI | |
 | 6. Modern .NET via hostfxr/CoreCLR | |
 | 7. Linux and ChromeOS adapters, own x86-64 to ARM64 translator | |
