@@ -199,8 +199,8 @@ fn register_class(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, 
     let base = a[0];
     let p = t.ptr_size() as u64;
     let wnd_proc = read_ptr(t, base + 4 + p - p + 4).unwrap_or(0); // offset 8 on x86
-    // On x86: cbSize(4), style(4), wndProc(4) = offset 8
-    // On x64: cbSize(4), style(4), pad(4?), wndProc(8) = offset 8 or 16
+                                                                   // On x86: cbSize(4), style(4), wndProc(4) = offset 8
+                                                                   // On x64: cbSize(4), style(4), pad(4?), wndProc(8) = offset 8 or 16
     let wnd_proc = if t.long_mode() {
         read_u64(t, base + 16).unwrap_or(0) // cbSize(4)+style(4)+pad(8) = 16? No
     } else {
@@ -247,10 +247,9 @@ fn create_window_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64
     } else {
         read_str(t, title_ptr, wide).unwrap_or_default()
     };
-    let hwnd = t
-        .k
-        .ui
-        .create_window(class, title, style, ex_style, x, y, w, h, parent, id);
+    let hwnd =
+        t.k.ui
+            .create_window(class, title, style, ex_style, x, y, w, h, parent, id);
     Ok(hwnd)
 }
 
@@ -272,12 +271,11 @@ fn show_window(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn get_window_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, buf, cch) = (a[0], a[1], a[2] as u32);
-    let title = t
-        .k
-        .ui
-        .window(hwnd)
-        .map(|w| w.title.clone())
-        .unwrap_or_default();
+    let title =
+        t.k.ui
+            .window(hwnd)
+            .map(|w| w.title.clone())
+            .unwrap_or_default();
     let (n, _) = copy_str_truncate(t, buf, cch as u64, &title, wide);
     Ok(n)
 }
@@ -312,12 +310,11 @@ fn set_window_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn get_window_rect(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, rect_ptr) = (a[0], a[1]);
-    let (x, y, w, h) = t
-        .k
-        .ui
-        .window(hwnd)
-        .map(|w| (w.x, w.y, w.w, w.h))
-        .unwrap_or((0, 0, 640, 480));
+    let (x, y, w, h) =
+        t.k.ui
+            .window(hwnd)
+            .map(|w| (w.x, w.y, w.w, w.h))
+            .unwrap_or((0, 0, 640, 480));
     write_u32(t, rect_ptr, x as u32);
     write_u32(t, rect_ptr + 4, y as u32);
     write_u32(t, rect_ptr + 8, (x + w) as u32);
@@ -327,12 +324,11 @@ fn get_window_rect(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn get_client_rect(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, rect_ptr) = (a[0], a[1]);
-    let (w, h) = t
-        .k
-        .ui
-        .window(hwnd)
-        .map(|w| (w.w, w.h))
-        .unwrap_or((640, 480));
+    let (w, h) =
+        t.k.ui
+            .window(hwnd)
+            .map(|w| (w.w, w.h))
+            .unwrap_or((640, 480));
     write_u32(t, rect_ptr, 0);
     write_u32(t, rect_ptr + 4, 0);
     write_u32(t, rect_ptr + 8, w as u32);
@@ -437,22 +433,20 @@ fn send_message(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, H
         WM_GETTEXT => {
             let buf = wp as u64;
             let cch = lp as u32;
-            let title = t
-                .k
-                .ui
-                .window(hwnd)
-                .map(|w| w.title.clone())
-                .unwrap_or_default();
+            let title =
+                t.k.ui
+                    .window(hwnd)
+                    .map(|w| w.title.clone())
+                    .unwrap_or_default();
             let (n, _) = copy_str_truncate(t, buf, cch as u64, &title, false);
             return Ok(n);
         }
         WM_GETTEXTLENGTH => {
-            let len = t
-                .k
-                .ui
-                .window(hwnd)
-                .map(|w| w.title.len() as u64)
-                .unwrap_or(0);
+            let len =
+                t.k.ui
+                    .window(hwnd)
+                    .map(|w| w.title.len() as u64)
+                    .unwrap_or(0);
             return Ok(len);
         }
         WM_SETTEXT => {
@@ -499,8 +493,7 @@ fn message_box(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
 fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     // Create a fake dialog window, call initproc, run the message loop until
     // EndDialog is called.
-    let (_hinstance, _template, parent, dlg_proc, init_param) =
-        (a[0], a[1], a[2], a[3], a[4]);
+    let (_hinstance, _template, parent, dlg_proc, init_param) = (a[0], a[1], a[2], a[3], a[4]);
     if dlg_proc == 0 {
         return Ok(0);
     }
@@ -534,27 +527,25 @@ fn end_dialog(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn get_dlg_item(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, id) = (a[0], a[1] as u64);
-    let found = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd)
-        .unwrap_or(0);
+    let found =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd)
+            .unwrap_or(0);
     Ok(found)
 }
 
 fn set_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, id, ptr) = (a[0], a[1] as u64, a[2]);
     let text = read_str(t, ptr, wide).unwrap_or_default();
-    let child_hwnd = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd);
+    let child_hwnd =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd);
     if let Some(ch) = child_hwnd {
         if let Some(w) = t.k.ui.window_mut(ch) {
             w.title = text;
@@ -565,13 +556,12 @@ fn set_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u6
 
 fn get_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, id, buf, cch) = (a[0], a[1] as u64, a[2], a[3] as u32);
-    let child_hwnd = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd);
+    let child_hwnd =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd);
     let title = child_hwnd
         .and_then(|h| t.k.ui.window(h))
         .map(|w| w.title.clone())
@@ -666,13 +656,8 @@ fn get_window_long(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64,
     let _ = wide;
     match idx {
         -16 => Ok(t.k.ui.window(hwnd).map(|w| w.style as u64).unwrap_or(0)), // GWL_STYLE
-        -20 => Ok(t
-            .k
-            .ui
-            .window(hwnd)
-            .map(|w| w.ex_style as u64)
-            .unwrap_or(0)), // GWL_EXSTYLE
-        -21 => Ok(t.k.ui.window(hwnd).map(|w| w.user_data).unwrap_or(0)), // GWL_USERDATA
+        -20 => Ok(t.k.ui.window(hwnd).map(|w| w.ex_style as u64).unwrap_or(0)), // GWL_EXSTYLE
+        -21 => Ok(t.k.ui.window(hwnd).map(|w| w.user_data).unwrap_or(0)),    // GWL_USERDATA
         _ => Ok(0),
     }
 }
@@ -800,15 +785,15 @@ fn get_text_metrics(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
         // Just zero the structure and set height.
         // TEXTMETRICA is 60 bytes; TEXTMETRICW is 60 bytes.
         // struct: tmHeight(4),tmAscent(4),tmDescent(4),tmInternalLeading(4),tmExternalLeading(4),...
-        write_u32(_t, ptr, 16);      // tmHeight
-        write_u32(_t, ptr + 4, 13);  // tmAscent
-        write_u32(_t, ptr + 8, 3);   // tmDescent
-        write_u32(_t, ptr + 12, 1);  // tmInternalLeading
-        write_u32(_t, ptr + 16, 2);  // tmExternalLeading
-        write_u32(_t, ptr + 20, 8);  // tmAveCharWidth
+        write_u32(_t, ptr, 16); // tmHeight
+        write_u32(_t, ptr + 4, 13); // tmAscent
+        write_u32(_t, ptr + 8, 3); // tmDescent
+        write_u32(_t, ptr + 12, 1); // tmInternalLeading
+        write_u32(_t, ptr + 16, 2); // tmExternalLeading
+        write_u32(_t, ptr + 20, 8); // tmAveCharWidth
         write_u32(_t, ptr + 24, 16); // tmMaxCharWidth
-        write_u32(_t, ptr + 28, 0);  // tmWeight
-        write_u32(_t, ptr + 32, 0);  // tmOverhang
+        write_u32(_t, ptr + 28, 0); // tmWeight
+        write_u32(_t, ptr + 32, 0); // tmOverhang
         write_u32(_t, ptr + 36, 96); // tmDigitizedAspectX
         write_u32(_t, ptr + 40, 96); // tmDigitizedAspectY
     }
@@ -931,7 +916,9 @@ fn find_window(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
         None
     };
     for w in &t.k.ui.windows {
-        let class_match = class.as_ref().map_or(true, |c| w.class.eq_ignore_ascii_case(c));
+        let class_match = class
+            .as_ref()
+            .map_or(true, |c| w.class.eq_ignore_ascii_case(c));
         let title_match = title.as_ref().map_or(true, |t| w.title == *t);
         if class_match && title_match {
             return Ok(w.hwnd);
@@ -965,27 +952,25 @@ fn call_window_proc(_t: &mut Thread<'_, '_>, _a: &[u64], _wide: bool) -> Result<
 
 fn send_dlg_item_message(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, Halt> {
     let (hwnd, id, msg, wp, lp) = (a[0], a[1] as u64, a[2] as u32, a[3], a[4]);
-    let child_hwnd = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd)
-        .unwrap_or(0);
+    let child_hwnd =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd)
+            .unwrap_or(0);
     send_message(t, &[child_hwnd, msg as u64, wp, lp], false)
 }
 
 fn check_dlg_button(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, id, check) = (a[0], a[1] as u64, a[2]);
-    let child_hwnd = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd)
-        .unwrap_or(0);
+    let child_hwnd =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd)
+            .unwrap_or(0);
     // Store check state in user_data
     if let Some(w) = t.k.ui.window_mut(child_hwnd) {
         w.user_data = check;
@@ -995,14 +980,13 @@ fn check_dlg_button(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn is_dlg_button_checked(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, id) = (a[0], a[1] as u64);
-    let child_hwnd = t
-        .k
-        .ui
-        .windows
-        .iter()
-        .find(|w| w.parent == hwnd && w.id == id)
-        .map(|w| w.hwnd)
-        .unwrap_or(0);
+    let child_hwnd =
+        t.k.ui
+            .windows
+            .iter()
+            .find(|w| w.parent == hwnd && w.id == id)
+            .map(|w| w.hwnd)
+            .unwrap_or(0);
     Ok(t.k.ui.window(child_hwnd).map(|w| w.user_data).unwrap_or(0))
 }
 
@@ -1090,10 +1074,7 @@ fn register_window_message(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Res
 
 fn copy_rect(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (dst, src) = (a[0], a[1]);
-    if let (Some(b), _) = (
-        crate::api::guest_bytes(t, src, 16),
-        (),
-    ) {
+    if let (Some(b), _) = (crate::api::guest_bytes(t, src, 16), ()) {
         write_bytes(t, dst, &b);
     }
     Ok(1)
@@ -1146,12 +1127,11 @@ fn pt_in_rect(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
 
 fn get_class_name(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, buf, cch) = (a[0], a[1], a[2] as u32);
-    let class = t
-        .k
-        .ui
-        .window(hwnd)
-        .map(|w| w.class.clone())
-        .unwrap_or_default();
+    let class =
+        t.k.ui
+            .window(hwnd)
+            .map(|w| w.class.clone())
+            .unwrap_or_default();
     let (n, _) = copy_str_truncate(t, buf, cch as u64, &class, wide);
     Ok(n)
 }
@@ -1225,11 +1205,7 @@ fn sh_get_folder_path(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u
     }
 }
 
-fn sh_get_special_folder_path(
-    t: &mut Thread<'_, '_>,
-    a: &[u64],
-    wide: bool,
-) -> Result<u64, Halt> {
+fn sh_get_special_folder_path(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let path_ptr = a[1];
     let s = r"C:\Users\User\AppData\Roaming";
     let (_, overflow) = copy_str_truncate(t, path_ptr, 260, s, wide);
@@ -1377,17 +1353,34 @@ fn create_status_window(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result
     } else {
         String::new()
     };
-    let hwnd =
-        t.k.ui
-            .create_window("msctls_statusbar32".into(), text, a[0] as u32, 0, 0, 0, 640, 22, a[2], a[3]);
+    let hwnd = t.k.ui.create_window(
+        "msctls_statusbar32".into(),
+        text,
+        a[0] as u32,
+        0,
+        0,
+        0,
+        640,
+        22,
+        a[2],
+        a[3],
+    );
     Ok(hwnd)
 }
 
 fn create_toolbar_ex(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let hwnd = t
-        .k
-        .ui
-        .create_window("ToolbarWindow32".into(), String::new(), 0, 0, 0, 0, 640, 26, a[0], 0);
+    let hwnd = t.k.ui.create_window(
+        "ToolbarWindow32".into(),
+        String::new(),
+        0,
+        0,
+        0,
+        0,
+        640,
+        26,
+        a[0],
+        0,
+    );
     Ok(hwnd)
 }
 
@@ -1434,8 +1427,24 @@ pub(crate) static APIS: &[Api] = &[
     u32api("RegisterClassExW", 1, |t, a| register_class(t, a, true)),
     u32api("UnregisterClassA", 2, |_, _| Ok(1)),
     u32api("UnregisterClassW", 2, |_, _| Ok(1)),
-    u32api("CreateWindowA", 11, |t, a| create_window_ex(t, &[0, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]], false)),
-    u32api("CreateWindowW", 11, |t, a| create_window_ex(t, &[0, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]], true)),
+    u32api("CreateWindowA", 11, |t, a| {
+        create_window_ex(
+            t,
+            &[
+                0, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9],
+            ],
+            false,
+        )
+    }),
+    u32api("CreateWindowW", 11, |t, a| {
+        create_window_ex(
+            t,
+            &[
+                0, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9],
+            ],
+            true,
+        )
+    }),
     u32api("CreateWindowExA", 12, |t, a| create_window_ex(t, a, false)),
     u32api("CreateWindowExW", 12, |t, a| create_window_ex(t, a, true)),
     u32api("DestroyWindow", 1, destroy_window),
@@ -1448,18 +1457,28 @@ pub(crate) static APIS: &[Api] = &[
     u32api("GetWindowTextA", 3, |t, a| get_window_text(t, a, false)),
     u32api("GetWindowTextW", 3, |t, a| get_window_text(t, a, true)),
     u32api("GetWindowTextLengthA", 1, |t, a| {
-        Ok(t.k.ui.window(a[0]).map(|w| w.title.len() as u64).unwrap_or(0))
+        Ok(t.k
+            .ui
+            .window(a[0])
+            .map(|w| w.title.len() as u64)
+            .unwrap_or(0))
     }),
     u32api("GetWindowTextLengthW", 1, |t, a| {
-        Ok(t.k.ui.window(a[0]).map(|w| w.title.len() as u64).unwrap_or(0))
+        Ok(t.k
+            .ui
+            .window(a[0])
+            .map(|w| w.title.len() as u64)
+            .unwrap_or(0))
     }),
     u32api("SetWindowTextA", 2, |t, a| set_window_text(t, a, false)),
     u32api("SetWindowTextW", 2, |t, a| set_window_text(t, a, true)),
     u32api("SetWindowPos", 7, set_window_pos),
     u32api("MoveWindow", 6, |t, a| {
         if let Some(w) = t.k.ui.window_mut(a[0]) {
-            w.x = a[1] as i32; w.y = a[2] as i32;
-            w.w = a[3] as i32; w.h = a[4] as i32;
+            w.x = a[1] as i32;
+            w.y = a[2] as i32;
+            w.w = a[3] as i32;
+            w.h = a[4] as i32;
             w.visible = a[5] != 0 || w.visible;
         }
         Ok(1)
@@ -1491,10 +1510,18 @@ pub(crate) static APIS: &[Api] = &[
     u32api("GetWindowLongW", 2, |t, a| get_window_long(t, a, true)),
     u32api("SetWindowLongA", 3, |t, a| set_window_long(t, a, false)),
     u32api("SetWindowLongW", 3, |t, a| set_window_long(t, a, true)),
-    u32api("GetWindowLongPtrA", 2, |t, a| get_window_long_ptr(t, a, false)),
-    u32api("GetWindowLongPtrW", 2, |t, a| get_window_long_ptr(t, a, true)),
-    u32api("SetWindowLongPtrA", 3, |t, a| set_window_long_ptr(t, a, false)),
-    u32api("SetWindowLongPtrW", 3, |t, a| set_window_long_ptr(t, a, true)),
+    u32api("GetWindowLongPtrA", 2, |t, a| {
+        get_window_long_ptr(t, a, false)
+    }),
+    u32api("GetWindowLongPtrW", 2, |t, a| {
+        get_window_long_ptr(t, a, true)
+    }),
+    u32api("SetWindowLongPtrA", 3, |t, a| {
+        set_window_long_ptr(t, a, false)
+    }),
+    u32api("SetWindowLongPtrW", 3, |t, a| {
+        set_window_long_ptr(t, a, true)
+    }),
     u32api("GetPropA", 2, |_, _| Ok(0)),
     u32api("GetPropW", 2, |_, _| Ok(0)),
     u32api("SetPropA", 3, |_, _| Ok(1)),
@@ -1504,8 +1531,12 @@ pub(crate) static APIS: &[Api] = &[
     // --- user32: message loop ---
     u32api("GetMessageA", 4, |t, a| peek_get_message(t, a, true, true)),
     u32api("GetMessageW", 4, |t, a| peek_get_message(t, a, true, true)),
-    u32api("PeekMessageA", 5, |t, a| peek_get_message(t, a, (a[4] & 1) != 0, false)),
-    u32api("PeekMessageW", 5, |t, a| peek_get_message(t, a, (a[4] & 1) != 0, false)),
+    u32api("PeekMessageA", 5, |t, a| {
+        peek_get_message(t, a, (a[4] & 1) != 0, false)
+    }),
+    u32api("PeekMessageW", 5, |t, a| {
+        peek_get_message(t, a, (a[4] & 1) != 0, false)
+    }),
     u32api("TranslateMessage", 1, translate_message),
     u32api("DispatchMessageA", 1, dispatch_message),
     u32api("DispatchMessageW", 1, dispatch_message),
@@ -1525,23 +1556,41 @@ pub(crate) static APIS: &[Api] = &[
     u32api("GetMessagePos", 0, get_message_pos),
     u32api("GetMessageTime", 0, get_message_time),
     u32api("InSendMessage", 0, |_, _| Ok(0)),
-    u32api("RegisterWindowMessageA", 1, |t, a| register_window_message(t, a, false)),
-    u32api("RegisterWindowMessageW", 1, |t, a| register_window_message(t, a, true)),
+    u32api("RegisterWindowMessageA", 1, |t, a| {
+        register_window_message(t, a, false)
+    }),
+    u32api("RegisterWindowMessageW", 1, |t, a| {
+        register_window_message(t, a, true)
+    }),
     // --- user32: dialog ---
     u32api("MessageBoxA", 4, |t, a| message_box(t, a, false)),
     u32api("MessageBoxW", 4, |t, a| message_box(t, a, true)),
     u32api("MessageBoxExA", 5, |t, a| message_box(t, a, false)),
     u32api("MessageBoxExW", 5, |t, a| message_box(t, a, true)),
-    u32api("MessageBoxIndirectA", 1, |t, a| message_box(t, &[a[0], 0, 0, 0], false)),
-    u32api("MessageBoxIndirectW", 1, |t, a| message_box(t, &[a[0], 0, 0, 0], true)),
+    u32api("MessageBoxIndirectA", 1, |t, a| {
+        message_box(t, &[a[0], 0, 0, 0], false)
+    }),
+    u32api("MessageBoxIndirectW", 1, |t, a| {
+        message_box(t, &[a[0], 0, 0, 0], true)
+    }),
     u32api("DialogBoxParamA", 5, |t, a| dialog_box_param(t, a, false)),
     u32api("DialogBoxParamW", 5, |t, a| dialog_box_param(t, a, true)),
-    u32api("DialogBoxIndirectParamA", 5, |t, a| dialog_box_param(t, a, false)),
-    u32api("DialogBoxIndirectParamW", 5, |t, a| dialog_box_param(t, a, true)),
-    u32api("CreateDialogParamA", 5, |t, a| dialog_box_param(t, a, false)),
+    u32api("DialogBoxIndirectParamA", 5, |t, a| {
+        dialog_box_param(t, a, false)
+    }),
+    u32api("DialogBoxIndirectParamW", 5, |t, a| {
+        dialog_box_param(t, a, true)
+    }),
+    u32api("CreateDialogParamA", 5, |t, a| {
+        dialog_box_param(t, a, false)
+    }),
     u32api("CreateDialogParamW", 5, |t, a| dialog_box_param(t, a, true)),
-    u32api("CreateDialogIndirectParamA", 5, |t, a| dialog_box_param(t, a, false)),
-    u32api("CreateDialogIndirectParamW", 5, |t, a| dialog_box_param(t, a, true)),
+    u32api("CreateDialogIndirectParamA", 5, |t, a| {
+        dialog_box_param(t, a, false)
+    }),
+    u32api("CreateDialogIndirectParamW", 5, |t, a| {
+        dialog_box_param(t, a, true)
+    }),
     u32api("EndDialog", 2, end_dialog),
     u32api("GetDlgItem", 2, get_dlg_item),
     u32api("SetDlgItemTextA", 3, |t, a| set_dlg_item_text(t, a, false)),
@@ -1550,8 +1599,12 @@ pub(crate) static APIS: &[Api] = &[
     u32api("GetDlgItemTextW", 4, |t, a| get_dlg_item_text(t, a, true)),
     u32api("GetDlgItemInt", 3, |_, _| Ok(0)),
     u32api("SetDlgItemInt", 4, |_, _| Ok(1)),
-    u32api("SendDlgItemMessageA", 5, |t, a| send_dlg_item_message(t, a, false)),
-    u32api("SendDlgItemMessageW", 5, |t, a| send_dlg_item_message(t, a, true)),
+    u32api("SendDlgItemMessageA", 5, |t, a| {
+        send_dlg_item_message(t, a, false)
+    }),
+    u32api("SendDlgItemMessageW", 5, |t, a| {
+        send_dlg_item_message(t, a, true)
+    }),
     u32api("CheckDlgButton", 3, check_dlg_button),
     u32api("IsDlgButtonChecked", 2, is_dlg_button_checked),
     u32api("CheckRadioButton", 4, |_, _| Ok(1)),
@@ -1658,12 +1711,18 @@ pub(crate) static APIS: &[Api] = &[
     u32api("FlashWindowEx", 1, |_, _| Ok(0)),
     u32api("BringWindowToTop", 1, |_, _| Ok(1)),
     u32api("SetActiveWindow", 1, |_, a| Ok(a[0])),
-    u32api("GetActiveWindow", 0, |t, _| Ok(t.k.ui.windows.first().map(|w| w.hwnd).unwrap_or(0))),
-    u32api("GetTopWindow", 1, |t, _| Ok(t.k.ui.windows.first().map(|w| w.hwnd).unwrap_or(0))),
+    u32api("GetActiveWindow", 0, |t, _| {
+        Ok(t.k.ui.windows.first().map(|w| w.hwnd).unwrap_or(0))
+    }),
+    u32api("GetTopWindow", 1, |t, _| {
+        Ok(t.k.ui.windows.first().map(|w| w.hwnd).unwrap_or(0))
+    }),
     u32api("SetWindowRgn", 3, |_, _| Ok(1)),
     u32api("SetParent", 2, |t, a| {
         let old = t.k.ui.window(a[0]).map(|w| w.parent).unwrap_or(0);
-        if let Some(w) = t.k.ui.window_mut(a[0]) { w.parent = a[1]; }
+        if let Some(w) = t.k.ui.window_mut(a[0]) {
+            w.parent = a[1];
+        }
         Ok(old)
     }),
     u32api("GetNextDlgTabItem", 3, |_, a| Ok(a[1])),
@@ -1677,9 +1736,17 @@ pub(crate) static APIS: &[Api] = &[
     u32api("SetClipboardData", 2, |_, a| Ok(a[1])),
     u32api("IsClipboardFormatAvailable", 1, |_, _| Ok(0)),
     u32api("CountClipboardFormats", 0, |_, _| Ok(0)),
-    u32api("RegisterClipboardFormatA", 1, |t, _| Ok(0xC000 + t.k.ui.classes.len() as u64)),
-    u32api("RegisterClipboardFormatW", 1, |t, _| Ok(0xC000 + t.k.ui.classes.len() as u64)),
-    u32api("GetCaretPos", 1, |t, a| { write_u32(t, a[0], 0); write_u32(t, a[0]+4, 0); Ok(1) }),
+    u32api("RegisterClipboardFormatA", 1, |t, _| {
+        Ok(0xC000 + t.k.ui.classes.len() as u64)
+    }),
+    u32api("RegisterClipboardFormatW", 1, |t, _| {
+        Ok(0xC000 + t.k.ui.classes.len() as u64)
+    }),
+    u32api("GetCaretPos", 1, |t, a| {
+        write_u32(t, a[0], 0);
+        write_u32(t, a[0] + 4, 0);
+        Ok(1)
+    }),
     u32api("SetCaretPos", 2, |_, _| Ok(1)),
     u32api("CreateCaret", 4, |_, _| Ok(1)),
     u32api("DestroyCaret", 0, |_, _| Ok(1)),
@@ -1708,7 +1775,6 @@ pub(crate) static APIS: &[Api] = &[
     u32api("TabbedTextOutA", 8, |t, a| text_out(t, a, false)),
     u32api("TabbedTextOutW", 8, |t, a| text_out(t, a, true)),
     u32api("FrameRect", 3, |_, _| Ok(1)),
-
     // --- gdi32 ---
     g32api("CreateFontA", 14, create_font),
     g32api("CreateFontW", 14, create_font),
@@ -1761,16 +1827,28 @@ pub(crate) static APIS: &[Api] = &[
     g32api("GetTextAlign", 1, |_, _| Ok(0)),
     g32api("GetTextMetricsA", 2, get_text_metrics),
     g32api("GetTextMetricsW", 2, get_text_metrics),
-    g32api("GetTextExtentPoint32A", 4, |t, a| get_text_extent_point(t, a, false)),
-    g32api("GetTextExtentPoint32W", 4, |t, a| get_text_extent_point(t, a, true)),
-    g32api("GetTextExtentExPointA", 7, |t, a| get_text_extent_point(t, a, false)),
-    g32api("GetTextExtentExPointW", 7, |t, a| get_text_extent_point(t, a, true)),
+    g32api("GetTextExtentPoint32A", 4, |t, a| {
+        get_text_extent_point(t, a, false)
+    }),
+    g32api("GetTextExtentPoint32W", 4, |t, a| {
+        get_text_extent_point(t, a, true)
+    }),
+    g32api("GetTextExtentExPointA", 7, |t, a| {
+        get_text_extent_point(t, a, false)
+    }),
+    g32api("GetTextExtentExPointW", 7, |t, a| {
+        get_text_extent_point(t, a, true)
+    }),
     g32api("GetCharWidthA", 4, |_, _| Ok(1)),
     g32api("GetCharWidthW", 4, |_, _| Ok(1)),
     g32api("GetCharWidth32A", 4, |_, _| Ok(1)),
     g32api("GetCharWidth32W", 4, |_, _| Ok(1)),
     g32api("GetDeviceCaps", 2, get_device_caps),
-    g32api("GetDCOrgEx", 2, |t, a| { write_u32(t, a[1], 0); write_u32(t, a[1]+4, 0); Ok(1) }),
+    g32api("GetDCOrgEx", 2, |t, a| {
+        write_u32(t, a[1], 0);
+        write_u32(t, a[1] + 4, 0);
+        Ok(1)
+    }),
     g32api("SaveDC", 1, |_, _| Ok(1)),
     g32api("RestoreDC", 2, |_, _| Ok(1)),
     g32api("SetROP2", 2, |_, _| Ok(0)),
@@ -1783,13 +1861,27 @@ pub(crate) static APIS: &[Api] = &[
     g32api("SetWindowExtEx", 3, |_, _| Ok(1)),
     g32api("ScaleViewportExtEx", 5, |_, _| Ok(1)),
     g32api("ScaleWindowExtEx", 5, |_, _| Ok(1)),
-    g32api("GetViewportOrgEx", 2, |t, a| { write_u32(t, a[1], 0); write_u32(t, a[1]+4, 0); Ok(1) }),
-    g32api("GetWindowOrgEx", 2, |t, a| { write_u32(t, a[1], 0); write_u32(t, a[1]+4, 0); Ok(1) }),
+    g32api("GetViewportOrgEx", 2, |t, a| {
+        write_u32(t, a[1], 0);
+        write_u32(t, a[1] + 4, 0);
+        Ok(1)
+    }),
+    g32api("GetWindowOrgEx", 2, |t, a| {
+        write_u32(t, a[1], 0);
+        write_u32(t, a[1] + 4, 0);
+        Ok(1)
+    }),
     g32api("IntersectClipRect", 5, |_, _| Ok(2)), // SIMPLEREGION
     g32api("ExcludeClipRect", 5, |_, _| Ok(2)),
     g32api("SelectClipRgn", 2, |_, _| Ok(2)),
     g32api("GetClipRgn", 2, |_, _| Ok(0)),
-    g32api("GetClipBox", 2, |t, a| { write_u32(t, a[1], 0); write_u32(t, a[1]+4, 0); write_u32(t, a[1]+8, 1920); write_u32(t, a[1]+12, 1080); Ok(1) }),
+    g32api("GetClipBox", 2, |t, a| {
+        write_u32(t, a[1], 0);
+        write_u32(t, a[1] + 4, 0);
+        write_u32(t, a[1] + 8, 1920);
+        write_u32(t, a[1] + 12, 1080);
+        Ok(1)
+    }),
     g32api("PtVisible", 3, |_, _| Ok(1)),
     g32api("RectVisible", 2, |_, _| Ok(1)),
     g32api("GdiFlush", 0, |_, _| Ok(1)),
@@ -1824,7 +1916,6 @@ pub(crate) static APIS: &[Api] = &[
     g32api("SetBitmapDimensionEx", 4, |_, _| Ok(1)),
     g32api("LPtoDP", 3, |_, _| Ok(1)),
     g32api("DPtoLP", 3, |_, _| Ok(1)),
-
     // --- comctl32 ---
     comctl("InitCommonControls", 0, init_common_controls),
     comctl("InitCommonControlsEx", 1, init_common_controls_ex),
@@ -1839,8 +1930,12 @@ pub(crate) static APIS: &[Api] = &[
     comctl("ImageList_LoadImageW", 7, |t, _| Ok(t.k.ui.next_gdi())),
     comctl("PropertySheetA", 1, property_sheet),
     comctl("PropertySheetW", 1, property_sheet),
-    comctl("CreateStatusWindowA", 4, |t, a| create_status_window(t, a, false)),
-    comctl("CreateStatusWindowW", 4, |t, a| create_status_window(t, a, true)),
+    comctl("CreateStatusWindowA", 4, |t, a| {
+        create_status_window(t, a, false)
+    }),
+    comctl("CreateStatusWindowW", 4, |t, a| {
+        create_status_window(t, a, true)
+    }),
     comctl("CreateToolbarEx", 13, create_toolbar_ex),
     comctl("FlatSB_EnableScrollBar", 3, |_, _| Ok(1)),
     comctl("FlatSB_GetScrollInfo", 3, |_, _| Ok(0)),
@@ -1859,16 +1954,21 @@ pub(crate) static APIS: &[Api] = &[
     comctl("MenuHelp", 7, |_, _| Ok(0)),
     comctl("GetEffectiveClientRect", 3, |_, _| Ok(0)),
     comctl("ShowHideMenuCtl", 3, |_, _| Ok(0)),
-
     // --- shell32 ---
     shell("ShellExecuteA", 6, |t, a| shell_execute(t, a, false)),
     shell("ShellExecuteW", 6, |t, a| shell_execute(t, a, true)),
     shell("ShellExecuteExA", 1, shell_execute_ex),
     shell("ShellExecuteExW", 1, shell_execute_ex),
-    shell("SHGetFolderPathA", 5, |t, a| sh_get_folder_path(t, a, false)),
+    shell("SHGetFolderPathA", 5, |t, a| {
+        sh_get_folder_path(t, a, false)
+    }),
     shell("SHGetFolderPathW", 5, |t, a| sh_get_folder_path(t, a, true)),
-    shell("SHGetSpecialFolderPathA", 4, |t, a| sh_get_special_folder_path(t, a, false)),
-    shell("SHGetSpecialFolderPathW", 4, |t, a| sh_get_special_folder_path(t, a, true)),
+    shell("SHGetSpecialFolderPathA", 4, |t, a| {
+        sh_get_special_folder_path(t, a, false)
+    }),
+    shell("SHGetSpecialFolderPathW", 4, |t, a| {
+        sh_get_special_folder_path(t, a, true)
+    }),
     shell("SHGetSpecialFolderLocation", 3, |_, _| Ok(1)),
     shell("SHGetPathFromIDListA", 2, sh_get_path_from_id_list),
     shell("SHGetPathFromIDListW", 2, sh_get_path_from_id_list),
@@ -1894,7 +1994,6 @@ pub(crate) static APIS: &[Api] = &[
     shell("DragFinish", 1, |_, _| Ok(0)),
     shell("Shell_NotifyIconA", 2, |_, _| Ok(1)),
     shell("Shell_NotifyIconW", 2, |_, _| Ok(1)),
-
     // --- comdlg32 ---
     comdlg("GetOpenFileNameA", 1, get_open_file_name),
     comdlg("GetOpenFileNameW", 1, get_open_file_name),
@@ -1905,7 +2004,6 @@ pub(crate) static APIS: &[Api] = &[
     comdlg("ChooseFontA", 1, choose_font),
     comdlg("ChooseFontW", 1, choose_font),
     comdlg("CommDlgExtendedError", 0, |_, _| Ok(0)),
-
     // --- ole32 ---
     ole32a("CoInitialize", 1, co_initialize),
     ole32a("CoInitializeEx", 2, co_initialize_ex),
@@ -1913,7 +2011,12 @@ pub(crate) static APIS: &[Api] = &[
     ole32a("CoCreateInstance", 5, co_create_instance),
     ole32a("CoGetClassObject", 5, co_get_class_object),
     ole32a("CoTaskMemAlloc", 1, |t, a| {
-        match t.process.memory.map_anywhere(a[0].max(1), anyos_memory::Protection::RW, "CoTaskMem", None) {
+        match t.process.memory.map_anywhere(
+            a[0].max(1),
+            anyos_memory::Protection::RW,
+            "CoTaskMem",
+            None,
+        ) {
             Ok(addr) => Ok(addr),
             Err(_) => Ok(0),
         }
@@ -1925,7 +2028,6 @@ pub(crate) static APIS: &[Api] = &[
     ole32a("CLSIDFromProgID", 2, |_, _| Ok(0x8004_0154u64)),
     ole32a("OleInitialize", 1, ole_initialize),
     ole32a("OleUninitialize", 0, ole_uninitialize),
-
     // --- oleaut32 ---
     oleaut("SysAllocString", 1, sys_alloc_string),
     oleaut("SysAllocStringLen", 2, sys_alloc_string),
@@ -1933,12 +2035,16 @@ pub(crate) static APIS: &[Api] = &[
     oleaut("SysStringLen", 1, |t, a| {
         // BSTR: length prefix 4 bytes before the pointer
         let addr = a[0];
-        if addr < 4 { return Ok(0); }
+        if addr < 4 {
+            return Ok(0);
+        }
         Ok(read_u32(t, addr - 4).map(|n| (n / 2) as u64).unwrap_or(0))
     }),
     oleaut("SysStringByteLen", 1, |t, a| {
         let addr = a[0];
-        if addr < 4 { return Ok(0); }
+        if addr < 4 {
+            return Ok(0);
+        }
         Ok(read_u32(t, addr - 4).map(u64::from).unwrap_or(0))
     }),
     oleaut("VariantInit", 1, variant_init),

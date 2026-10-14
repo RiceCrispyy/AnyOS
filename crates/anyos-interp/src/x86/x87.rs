@@ -620,7 +620,7 @@ impl Insn<'_> {
                 self.fpop();
             }
             (0xDB, 4) => match i {
-                0 | 1 | 4 => {} // feni, fdisi, fsetpm: no-ops on 387+
+                0 | 1 | 4 => {}                    // feni, fdisi, fsetpm: no-ops on 387+
                 2 => self.c.fpu.status &= !0x80FF, // fnclex
                 3 => self.finit(),
                 _ => return Err(self.invalid()),
