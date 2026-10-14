@@ -4,11 +4,14 @@ A standalone runtime written in Rust that aims to run programs built for one OS
 on another, starting with Windows programs on macOS (then Linux and ChromeOS). It
 does not use Wine and does not need a VM.
 
-**Status:** milestones 1 and 2 are done. AnyOS can inspect Windows PE files and
-load them into an emulated guest process: map, relocate, bind imports and set up
-TLS. It also recognises Linux (ELF) and macOS (Mach-O) programs and says how it
-would run them, and it keeps per-program network redirects. It cannot execute
-guest code yet. See [docs/architecture.md](docs/architecture.md).
+**Status:** milestones 1 and 2 are done and milestone 3 has started. AnyOS can
+inspect Windows PE files and load them into an emulated guest process: map,
+relocate, bind imports and set up TLS. Small Windows console programs (x86 and
+x64) now run end to end on a portable interpreter on any host, including Apple
+Silicon Macs, with Windows API calls served through the call gate; only a
+handful of `kernel32` functions exist so far. AnyOS also recognises Linux (ELF)
+and macOS (Mach-O) programs and says how it would run them, and it keeps
+per-program network redirects. See [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
@@ -22,7 +25,13 @@ cargo build --release
 ./target/release/anyos inspect --host macos-arm64 app.exe  # plan for another host
 ./target/release/anyos inspect some-linux-program          # ELF and Mach-O work too
 ./target/release/anyos inspect setup.exe                   # installers: NSIS, Inno, MSI, .deb, .pkg, ...
+./target/release/anyos run tests/fixtures/bin/x64/hello_console.exe   # run a Windows console program
+./target/release/anyos run --trace app.exe                 # + log every Windows API call
 ```
+
+`anyos run` stops with a clear message naming the first Windows API or
+instruction it does not support yet (for example `kernel32.dll!HeapAlloc is not
+implemented yet`), so the gaps show up one at a time.
 
 ### Installing apps
 

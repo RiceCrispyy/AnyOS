@@ -1,0 +1,12 @@
+[package]
+name = "anyos-backend"
+description = "Execution backend interface for AnyOS: guest CPU contexts, stop reasons and the ExecutionBackend trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyos-memory.workspace = true
+thiserror.workspace = true
