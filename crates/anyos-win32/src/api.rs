@@ -945,8 +945,6 @@ pub(crate) static ADVAPI32: &[Api] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn advapi32_conversions_are_possible() {
         assert!(crate::api::implemented(
