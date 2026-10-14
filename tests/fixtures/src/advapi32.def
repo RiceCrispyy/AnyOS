@@ -1,0 +1,12 @@
+LIBRARY advapi32.dll
+EXPORTS
+  GetUserNameA@8
+  RegCreateKeyExA@36
+  RegOpenKeyExA@20
+  RegCloseKey@4
+  RegSetValueExA@24
+  RegQueryValueExA@24
+  RegEnumValueA@32
+  RegEnumKeyExA@32
+  RegDeleteValueA@8
+  RegDeleteKeyA@8

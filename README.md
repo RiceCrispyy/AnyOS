@@ -8,8 +8,11 @@ does not use Wine and does not need a VM.
 inspect Windows PE files and load them into an emulated guest process: map,
 relocate, bind imports and set up TLS. Small Windows console programs (x86 and
 x64) now run end to end on a portable interpreter on any host, including Apple
-Silicon Macs, with Windows API calls served through the call gate; only a
-handful of `kernel32` functions exist so far. AnyOS also recognises Linux (ELF)
+Silicon Macs, with Windows API calls served through the call gate. Most of
+`kernel32` is there: threads and synchronisation, heaps and virtual memory,
+files, the environment, time, code pages, locale and resources, plus the
+`advapi32` registry (kept in the environment's `registry.toml`) and user32's
+string helpers. GUI APIs come later. AnyOS also recognises Linux (ELF)
 and macOS (Mach-O) programs and says how it would run them, and it keeps
 per-program network redirects. See [docs/architecture.md](docs/architecture.md).
 
@@ -70,7 +73,13 @@ cargo build --release
 ./target/release/anyos inspect setup.exe                   # installers: NSIS, Inno, MSI, .deb, .pkg, ...
 ./target/release/anyos run tests/fixtures/bin/x64/hello_console.exe   # run a Windows console program
 ./target/release/anyos run --trace app.exe                 # + log every Windows API call
+./target/release/anyos run --env games app.exe             # see the C: drive and registry of an environment
 ```
+
+A Windows program sees an environment's `C:` drive and registry: the one it is
+installed in, the one `--env` names, or the default environment when it
+exists. Host folders appear under `Z:`. `CreateProcess` starts the child as
+another `anyos run` in the same environment.
 
 `anyos run` stops with a clear message naming the first Windows API or
 instruction it does not support yet (for example `kernel32.dll!HeapAlloc is not

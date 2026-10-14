@@ -138,6 +138,11 @@ struct RunArgs {
     /// Windows programs: print each Windows API call and its result to stderr.
     #[arg(long)]
     trace: bool,
+    /// Windows programs: the environment whose C: drive and registry the
+    /// program sees. Default: the environment the program is installed in,
+    /// otherwise the default environment if it exists.
+    #[arg(long = "env")]
+    env: Option<String>,
     /// Arguments passed to the guest program (argv[1..]).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -367,10 +372,62 @@ fn run_guest(a: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Prefix of host environment variables passed into a Windows program's
+/// environment (how a parent's CreateProcess environment reaches a child).
+const GUEST_ENV_PREFIX: &str = "ANYOS_GUEST_ENV_";
+
+/// The environment a Windows program runs in: the one named, the one whose
+/// drive the program is in, or the default one when it already exists.
+fn env_for_program(name: Option<&str>, program: &Path) -> Result<Option<Env>, String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    if let Some(name) = name {
+        return Env::open_or_create(&dir, name)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    let names = anyos_env::list(&dir).unwrap_or_default();
+    for n in &names {
+        let Ok(env) = Env::open_or_create(&dir, n) else {
+            continue;
+        };
+        let drive = std::fs::canonicalize(env.drive_c()).unwrap_or_else(|_| env.drive_c());
+        if program.starts_with(&drive) {
+            return Ok(Some(env));
+        }
+    }
+    if names.iter().any(|n| n == anyos_env::DEFAULT_ENV) {
+        return Env::open_or_create(&dir, anyos_env::DEFAULT_ENV)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    Ok(None)
+}
+
 fn run_windows(a: &RunArgs) -> Result<(), String> {
+    let env = env_for_program(a.env.as_deref(), &a.program)?;
+    // CreateProcess in the guest starts another `anyos run` in the same environment.
+    let mut child_runner = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        child_runner.push(exe.into_os_string());
+        child_runner.push("--no-update-check".into());
+        child_runner.push("run".into());
+        if let Some(env) = &env {
+            child_runner.push("--env".into());
+            child_runner.push(env.name().into());
+        }
+    }
+    let guest_env = std::env::vars()
+        .filter_map(|(k, v)| Some((k.strip_prefix(GUEST_ENV_PREFIX)?.to_string(), v)))
+        .collect();
     let opts = anyos_win32::RunOptions {
         args: a.args.clone(),
         trace: a.trace,
+        drive_c: env.as_ref().map(Env::drive_c),
+        registry_file: env.as_ref().map(Env::registry_path),
+        user: env.as_ref().map(|e| e.user().to_string()),
+        env: guest_env,
+        child_runner,
         ..Default::default()
     };
     let (mut out, mut err) = (std::io::stdout(), std::io::stderr());

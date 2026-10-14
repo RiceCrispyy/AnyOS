@@ -17,8 +17,21 @@
 //! [`RunError::UnimplementedApi`] naming it, so missing coverage shows up by name.
 
 mod api;
+mod console;
+mod file;
+mod heap;
+mod locale;
+mod memory;
 mod module;
+mod objects;
+mod process;
+mod registry;
+mod resource;
+mod strings;
+mod sync;
+mod sysinfo;
 mod thread;
+mod time;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -47,6 +60,21 @@ pub struct RunOptions {
     pub trace: bool,
     /// Stop after this many guest instructions.
     pub instruction_limit: Option<u64>,
+    /// Host folder the guest sees as `C:\` (an AnyOS environment's drive).
+    /// Without one, only host paths (under `Z:\`) are reachable on Unix hosts.
+    pub drive_c: Option<PathBuf>,
+    /// Registry file (an environment's `registry.toml`) the guest reads and
+    /// writes; changes are saved back when the program ends. Without one the
+    /// registry lives only as long as the run.
+    pub registry_file: Option<PathBuf>,
+    /// Windows user name the guest sees (default: the host user name).
+    pub user: Option<String>,
+    /// Extra or overriding environment variables for the guest.
+    pub env: Vec<(String, String)>,
+    /// Command that runs another Windows program, for `CreateProcess`; the
+    /// program's host path and its arguments are appended. Empty: child
+    /// processes are not supported.
+    pub child_runner: Vec<std::ffi::OsString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +108,16 @@ pub enum RunError {
     DllInitFailed { module: String },
     #[error("stopped after the {0}-instruction limit")]
     InstructionLimit(u64),
+    #[error("the program can never continue: {detail}")]
+    Deadlock { detail: String },
+    #[error("the program raised exception {code:#010x} in {location} and has no handler AnyOS can run yet")]
+    GuestException { code: u32, location: String },
+}
+
+/// Whether AnyOS implements `name` exported by `dll` (e.g. `kernel32.dll`),
+/// for reports of which imports a program needs that are still missing.
+pub fn implements(dll: &str, name: &str) -> bool {
+    api::implemented(dll, name)
 }
 
 /// Load the Windows program at `path` and run it to completion on the

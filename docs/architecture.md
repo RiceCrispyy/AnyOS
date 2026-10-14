@@ -111,7 +111,7 @@ edits and tests profiles today.
 | `apps/anyos-cli` | built | `anyos inspect` (PE, ELF, Mach-O), `anyos load` (dry run), `anyos redirect`. |
 | `crates/anyos-backend` | built | `ExecutionBackend` trait, guest CPU context (`GuestContext`, `X86Context`), `StopReason` and `GuestFault`. |
 | `crates/anyos-interp` | built (integer subset) | Portable x86/x64 interpreter backend: general-purpose integer instructions, string ops, `fs`/`gs` bases, SSE moves and SSE2 packed integers. No x87 or SSE floating point yet. |
-| `crates/anyos-win32` | built (first APIs) | Windows personality: stack, TEB/PEB, static TLS, DLL and TLS initialisation, call-gate dispatch with x64 and stdcall conventions, first `kernel32` APIs. |
+| `crates/anyos-win32` | built (console APIs) | Windows personality: stack, TEB/PEB, static TLS, DLL and TLS initialisation, call-gate dispatch with x64, stdcall and cdecl conventions, a cooperative thread scheduler, a handle table, and most of `kernel32` (threads, sync, heaps, virtual memory, files, environment, time, locale, resources) plus the `advapi32` registry. |
 | `crates/anyos-exec` | built (Linux ELF) | Runs Linux x86-64 ELF programs (native on Windows via syscall trapping, directly on Linux). |
 | native and translating backends | later | Direct execution on a matching CPU, and a translator. |
 | `anyos-win32-abi` + `anyos-api-*` | later | Calling conventions, struct layouts, error codes, and API providers grouped by family. |
@@ -220,6 +220,14 @@ entry point) by pushing the address of a private gate stub as the return
 address, so a `Breakpoint` there means the call has returned. Memory is the
 emulated `AddressSpace` for now; a native backend will need host-mapped guest
 memory behind the same operations.
+
+Guest threads share the one backend and take turns: the run loop switches
+threads when a time slice runs out, when a thread ends, and when an API call
+has to wait. A waiting call (`WaitForSingleObject`, `EnterCriticalSection`,
+`Sleep`) leaves the thread stopped on its call-gate stub, so when the thread is
+picked again the same call runs again and re-checks what it waits for. No
+host thread ever blocks inside an API, and the order of execution is
+deterministic apart from timeouts.
 
 `anyos run app.exe` runs a Windows x86 or x64 program this way on the
 interpreter. The interpreter is checked against a real CPU:
@@ -392,7 +400,7 @@ writes (`*_raw`) marks the places where it acts as the kernel.
 | 1. PE inspector (`anyos inspect`) | Done |
 | 2. PE loader (map, relocate, bind, TLS, protections) | Done (emulated guest memory) |
 | 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Interpreter and call-gate dispatch done; macOS guest memory next |
-| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | |
+| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | kernel32 and the advapi32 registry done; CRT DLLs and exceptions next |
 | 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification, environments, MSI/ZIP/7-Zip done; Inno and NSIS next |
 | 5. Basic Win32 GUI on macOS: windows, messages, input, GDI | |
 | 6. Modern .NET via hostfxr/CoreCLR | |

@@ -391,12 +391,17 @@ pub(crate) fn guest_path(host: &Path) -> String {
     }
 }
 
+/// The program's own path as the guest sees it.
+pub(crate) fn main_module_path(t: &Thread<'_, '_>) -> String {
+    module_file_name(t, &Module::Loaded(0))
+}
+
 fn module_file_name(t: &Thread<'_, '_>, m: &Module) -> String {
     match *m {
         Module::Loaded(i) => {
             let m = &t.process.modules[i];
             match &m.path {
-                Some(p) => guest_path(p),
+                Some(p) => crate::file::guest_path(t, p),
                 None => format!(r"C:\{}", m.name),
             }
         }

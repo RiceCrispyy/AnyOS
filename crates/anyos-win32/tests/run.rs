@@ -123,3 +123,40 @@ fn run_time_linking_works() {
         assert_eq!(r.expect(arch).exit_code, 0x7FF, "{arch}: {err}");
     }
 }
+
+/// Heaps, virtual memory, TLS, threads and synchronisation, files, wsprintf,
+/// code pages, the registry, time, the environment and system information,
+/// checked from inside the guest (see apitest.c). Runs in a scratch
+/// environment so the registry it writes is saved and can be checked.
+#[test]
+fn kernel32_apis_behave_like_windows() {
+    for arch in ["x64", "x86"] {
+        let env = std::env::temp_dir().join(format!("anyos-apitest-{arch}-{}", std::process::id()));
+        let drive_c = env.join("drive_c");
+        std::fs::create_dir_all(&drive_c).unwrap();
+        let registry_file = env.join("registry.toml");
+        let opts = RunOptions {
+            drive_c: Some(drive_c.clone()),
+            registry_file: Some(registry_file.clone()),
+            user: Some("tester".into()),
+            ..RunOptions::default()
+        };
+        let (r, out, err) = run(arch, "apitest.exe", &opts);
+        let outcome = r.unwrap_or_else(|e| panic!("{arch}: {e}\n{out}{err}"));
+        assert_eq!(
+            (outcome.exit_code, out.as_str()),
+            (0, "ok\n"),
+            "{arch}: {err}"
+        );
+        // The temporary files went to the user's Temp folder inside drive_c,
+        // and the test key was deleted again but the registry was written.
+        assert!(
+            drive_c.join("Users/tester/AppData/Local/Temp").is_dir(),
+            "{arch}"
+        );
+        let saved = std::fs::read_to_string(&registry_file).unwrap();
+        assert!(saved.contains("Windows NT"), "{arch}: {saved}");
+        assert!(!saved.contains("AnyOS Test"), "{arch}: {saved}");
+        std::fs::remove_dir_all(&env).unwrap();
+    }
+}
