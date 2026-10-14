@@ -10,6 +10,10 @@ pub struct InstalledApp {
     pub detail: String,
     /// The environment it is installed in, when there is more than one.
     pub env: Option<String>,
+    /// The environment name, always set (needed to address the app for uninstall).
+    pub env_name: String,
+    /// The app id from AppIndex (needed to address the app for uninstall).
+    pub id: String,
     /// Programs it can start, best first: the one the installer named, then
     /// the other `.exe` files in its folder. Each is (label, host path).
     pub programs: Vec<(String, PathBuf)>,
@@ -37,6 +41,8 @@ pub fn load() -> Vec<InstalledApp> {
                     version: a.version.clone(),
                     detail: detail(a),
                     env: show_env.then(|| name.clone()),
+                    env_name: name.clone(),
+                    id: a.id.clone(),
                     programs: programs(&env, a),
                 },
             ));

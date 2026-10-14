@@ -155,6 +155,13 @@ pub fn install_command(cli: &Path, installer: &Path) -> Command {
     c
 }
 
+/// `anyos uninstall <app_id> --env <env_name>`
+pub fn uninstall_command(cli: &Path, app_id: &str, env_name: &str) -> Command {
+    let mut c = Command::new(cli);
+    c.arg("uninstall").arg(app_id).arg("--env").arg(env_name);
+    c
+}
+
 /// A program built for this computer, started without AnyOS. A macOS `.app`
 /// goes through `open` so it starts the way Finder would start it.
 pub fn launch_command(picked: &Path, program: &Path, args: &[String]) -> Command {

@@ -71,6 +71,14 @@ enum Stream {
     Info,
 }
 
+/// What the user picked in the installed-apps list.
+enum ListPick {
+    /// Open the program in the details view (run = false) or run it right away.
+    Open { path: PathBuf, run: bool },
+    /// Uninstall the app by id from the named environment.
+    Uninstall { id: String, env_name: String },
+}
+
 struct AnyosApp {
     host: HostPlatform,
     cli: Option<PathBuf>,
@@ -125,6 +133,10 @@ impl AnyosApp {
             (Action::Install, Some(cli)) => runner::install_command(cli, &a.program),
             _ => return,
         };
+        self.start_cmd(cmd, ctx);
+    }
+
+    fn start_cmd(&mut self, cmd: std::process::Command, ctx: &egui::Context) {
         self.log.clear();
         self.log
             .push((Stream::Info, format!("$ {}", describe(&cmd))));
@@ -232,10 +244,20 @@ impl eframe::App for AnyosApp {
             }
             match &self.analysis {
                 None => {
-                    if let Some((p, run)) = self.installed_list(ui) {
-                        self.open(&p);
-                        if run {
-                            self.start(&ctx);
+                    if let Some(pick) = self.installed_list(ui) {
+                        match pick {
+                            ListPick::Open { path, run } => {
+                                self.open(&path);
+                                if run {
+                                    self.start(&ctx);
+                                }
+                            }
+                            ListPick::Uninstall { id, env_name } => {
+                                if let Some(cli) = &self.cli {
+                                    let cmd = runner::uninstall_command(cli, &id, &env_name);
+                                    self.start_cmd(cmd, &ctx);
+                                }
+                            }
                         }
                         return;
                     }
@@ -260,15 +282,15 @@ impl eframe::App for AnyosApp {
 }
 
 impl AnyosApp {
-    /// The installed apps, newest first, above the drop zone. Returns the
-    /// program picked and whether to run it right away (otherwise it is only
-    /// opened, to show its details first).
-    fn installed_list(&mut self, ui: &mut egui::Ui) -> Option<(PathBuf, bool)> {
+    /// The installed apps, newest first, above the drop zone. Returns what
+    /// the user picked: open/run a program, or uninstall an app.
+    fn installed_list(&mut self, ui: &mut egui::Ui) -> Option<ListPick> {
         if self.installed.is_empty() {
             return None;
         }
-        let mut picked = None;
+        let mut picked: Option<ListPick> = None;
         let can_run = self.cli.is_some();
+        let busy = self.job.is_some();
         ui.label(RichText::new("Your apps").strong());
         egui::ScrollArea::vertical()
             .max_height(ui.available_height() * 0.6)
@@ -290,11 +312,14 @@ impl AnyosApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let main = app.programs.first();
                             if app.programs.len() > 1 {
-                                ui.add_enabled_ui(can_run, |ui| {
+                                ui.add_enabled_ui(can_run && !busy, |ui| {
                                     ui.menu_button("More", |ui| {
                                         for (label, path) in &app.programs {
                                             if ui.button(format!("Run {label}")).clicked() {
-                                                picked = Some((path.clone(), true));
+                                                picked = Some(ListPick::Open {
+                                                    path: path.clone(),
+                                                    run: true,
+                                                });
                                                 ui.close();
                                             }
                                         }
@@ -309,7 +334,10 @@ impl AnyosApp {
                                     "What AnyOS knows about the program, before running it",
                                 );
                             if details.clicked() {
-                                picked = main.map(|(_, p)| (p.clone(), false));
+                                picked = main.map(|(_, p)| ListPick::Open {
+                                    path: p.clone(),
+                                    run: false,
+                                });
                             }
                             let run = egui::Button::new(RichText::new("▶  Run").strong())
                                 .min_size(egui::vec2(80.0, 26.0));
@@ -318,14 +346,32 @@ impl AnyosApp {
                                 Some(_) if !can_run => {
                                     "The anyos command-line tool was not found.".to_string()
                                 }
+                                Some(_) if busy => {
+                                    "Another program is already running.".to_string()
+                                }
                                 Some((label, _)) => format!("Run {label}"),
                             };
                             let r = ui
-                                .add_enabled(main.is_some() && can_run, run)
+                                .add_enabled(main.is_some() && can_run && !busy, run)
                                 .on_hover_text(&hover)
                                 .on_disabled_hover_text(&hover);
                             if r.clicked() {
-                                picked = main.map(|(_, p)| (p.clone(), true));
+                                picked = main.map(|(_, p)| ListPick::Open {
+                                    path: p.clone(),
+                                    run: true,
+                                });
+                            }
+                            let del = egui::Button::new("🗑").min_size(egui::vec2(32.0, 26.0));
+                            if ui
+                                .add_enabled(!busy, del)
+                                .on_hover_text(format!("Uninstall {}", app.name))
+                                .on_disabled_hover_text("Another program is already running.")
+                                .clicked()
+                            {
+                                picked = Some(ListPick::Uninstall {
+                                    id: app.id.clone(),
+                                    env_name: app.env_name.clone(),
+                                });
                             }
                         });
                     });
