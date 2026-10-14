@@ -138,6 +138,11 @@ struct RunArgs {
     /// Windows programs: print each Windows API call and its result to stderr.
     #[arg(long)]
     trace: bool,
+    /// Windows programs: the environment whose C: drive and registry the
+    /// program sees. Default: the environment the program is installed in,
+    /// otherwise the default environment if it exists.
+    #[arg(long = "env")]
+    env: Option<String>,
     /// Arguments passed to the guest program (argv[1..]).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
@@ -367,10 +372,62 @@ fn run_guest(a: RunArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Prefix of host environment variables passed into a Windows program's
+/// environment (how a parent's CreateProcess environment reaches a child).
+const GUEST_ENV_PREFIX: &str = "ANYOS_GUEST_ENV_";
+
+/// The environment a Windows program runs in: the one named, the one whose
+/// drive the program is in, or the default one when it already exists.
+fn env_for_program(name: Option<&str>, program: &Path) -> Result<Option<Env>, String> {
+    let dir = anyos_env::data_dir().map_err(|e| e.to_string())?;
+    if let Some(name) = name {
+        return Env::open_or_create(&dir, name)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    let program = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    let names = anyos_env::list(&dir).unwrap_or_default();
+    for n in &names {
+        let Ok(env) = Env::open_or_create(&dir, n) else {
+            continue;
+        };
+        let drive = std::fs::canonicalize(env.drive_c()).unwrap_or_else(|_| env.drive_c());
+        if program.starts_with(&drive) {
+            return Ok(Some(env));
+        }
+    }
+    if names.iter().any(|n| n == anyos_env::DEFAULT_ENV) {
+        return Env::open_or_create(&dir, anyos_env::DEFAULT_ENV)
+            .map(Some)
+            .map_err(|e| e.to_string());
+    }
+    Ok(None)
+}
+
 fn run_windows(a: &RunArgs) -> Result<(), String> {
+    let env = env_for_program(a.env.as_deref(), &a.program)?;
+    // CreateProcess in the guest starts another `anyos run` in the same environment.
+    let mut child_runner = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        child_runner.push(exe.into_os_string());
+        child_runner.push("--no-update-check".into());
+        child_runner.push("run".into());
+        if let Some(env) = &env {
+            child_runner.push("--env".into());
+            child_runner.push(env.name().into());
+        }
+    }
+    let guest_env = std::env::vars()
+        .filter_map(|(k, v)| Some((k.strip_prefix(GUEST_ENV_PREFIX)?.to_string(), v)))
+        .collect();
     let opts = anyos_win32::RunOptions {
         args: a.args.clone(),
         trace: a.trace,
+        drive_c: env.as_ref().map(Env::drive_c),
+        registry_file: env.as_ref().map(Env::registry_path),
+        user: env.as_ref().map(|e| e.user().to_string()),
+        env: guest_env,
+        child_runner,
         ..Default::default()
     };
     let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
@@ -446,11 +503,25 @@ fn install_app(a: InstallArgs) -> Result<(), String> {
             println!("  - {n}");
         }
     }
-    println!("\nAnyOS cannot start Windows programs yet; the app is ready for when it can.");
+    if let Some(main) = app.main.as_deref().and_then(|m| env.host_path(m).ok()) {
+        println!("\nRun it with: anyos run \"{}\"", main.display());
+    }
     Ok(())
 }
 
+/// `2026-10-14 06:15 UTC` from what the install index stores.
+fn install_time(app: &AppRecord) -> Option<String> {
+    let t = anyos_env::clock::parse_rfc3339(app.installed_at.as_deref()?)?;
+    let s = anyos_env::clock::format_rfc3339(t);
+    Some(format!("{} {} UTC", &s[..10], &s[11..16]))
+}
+
 fn print_app_paths(env: &Env, app: &AppRecord) {
+    match (install_time(app), app.size_bytes) {
+        (Some(t), Some(n)) => println!("  Installed:       {t}, {}", human_bytes(n)),
+        (Some(t), None) => println!("  Installed:       {t}"),
+        _ => {}
+    }
     let host = |w: &str| {
         env.host_path(w)
             .map(|p| p.display().to_string())
@@ -491,7 +562,7 @@ fn list_apps(a: AppsArgs) -> Result<(), String> {
         return Ok(());
     }
     println!("Apps in environment \"{}\"", env.name());
-    for app in &index.apps {
+    for app in index.by_install_date() {
         println!(
             "\n{} ({}){}",
             app.name,
@@ -1303,4 +1374,18 @@ fn load(a: LoadArgs) -> Result<(), String> {
         "\nNext step: an execution backend (not built yet) would start at the entry point above."
     );
     Ok(())
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if n < 1024 {
+        return format!("{n} bytes");
+    }
+    let mut v = n as f64 / 1024.0;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    format!("{v:.1} {}", UNITS[unit])
 }

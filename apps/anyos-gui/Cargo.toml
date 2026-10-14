@@ -12,6 +12,7 @@ name = "anyos-gui"
 path = "src/main.rs"
 
 [dependencies]
+anyos-env.workspace = true
 anyos-pe.workspace = true
 anyos-format.workspace = true
 anyos-package.workspace = true

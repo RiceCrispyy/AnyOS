@@ -17,6 +17,7 @@
 //! Windows and `$XDG_DATA_HOME/anyos` (or `~/.local/share/anyos`) elsewhere.
 
 pub mod apps;
+pub mod clock;
 pub mod registry;
 
 use std::path::{Path, PathBuf};
