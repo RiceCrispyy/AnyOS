@@ -80,8 +80,10 @@ fn entries(t: &Thread<'_, '_>, root: u64, table: u64) -> Vec<(ResId, u64, bool)>
             let len = read_u16(t, s).unwrap_or(0) as u64;
             let units: Vec<u16> = guest_bytes(t, s + 2, len * 2)
                 .unwrap_or_default()
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&c| u16::from_le_bytes(c))
                 .collect();
             ResId::Name(String::from_utf16_lossy(&units))
         } else {
@@ -189,8 +191,10 @@ fn load_string_units(t: &Thread<'_, '_>, module: u64, id: u32) -> Option<(u64, V
     }
     let len = read_u16(t, p)? as u64;
     let units = guest_bytes(t, p + 2, len * 2)?
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .collect();
     Some((p + 2, units))
 }

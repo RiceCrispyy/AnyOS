@@ -204,8 +204,10 @@ fn value_bytes(v: &RegValue, wide: bool) -> (u32, Vec<u8>) {
 fn decode_strings(data: &[u8], wide: bool) -> Vec<String> {
     let text = if wide {
         let units: Vec<u16> = data
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_le_bytes(c))
             .collect();
         String::from_utf16_lossy(&units)
     } else {
