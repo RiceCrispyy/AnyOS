@@ -109,6 +109,10 @@ jobs:
             mkdir -p "$app/MacOS"
             cp "$out/anyos-gui" "$out/anyos" "$app/MacOS/"
             sed "s/@VERSION@/${version#v}/" apps/anyos-gui/macos/Info.plist > "$app/Info.plist"
+            # Verify the app bundle was actually assembled (guards against
+            # building from a commit that predates anyos-gui / Info.plist).
+            [[ -f "dist/$name/AnyOS.app/Contents/MacOS/anyos-gui" ]] || \
+              { echo "::error::AnyOS.app was not built correctly"; exit 1; }
           else
             bin="$out/anyos"
             cp "$out/anyos-gui" "dist/$name/"

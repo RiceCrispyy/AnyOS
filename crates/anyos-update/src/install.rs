@@ -164,10 +164,13 @@ pub(crate) fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, Error> {
 /// Returns the names replaced.
 pub(crate) fn swap_in(layout: &Layout, new_root: &Path) -> Result<Vec<String>, Error> {
     let items = layout.items(new_root);
-    let (own, own_src) = &items[0];
+    let (_own, own_src) = &items[0];
     if !new_root.join(own_src).exists() {
         return Err(Error::BadArchive(format!(
-            "the release has no {own_src} to replace {own} with"
+            "release archive is missing {own_src} — it may have been built \
+             from an older commit that predates the macOS app. \
+             Download the latest release manually from \
+             https://github.com/RiceCrispyy/AnyOS/releases"
         )));
     }
     let mut done = Vec::new();
