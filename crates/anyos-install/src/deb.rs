@@ -141,7 +141,7 @@ fn extract_data(ar_bytes: &[u8], w: &mut Writer) -> Result<usize, InstallError> 
         }
         // Advance past this member, aligned to even offset.
         offset += size;
-        if size % 2 != 0 {
+        if !size.is_multiple_of(2) {
             offset += 1;
         }
     }
@@ -173,7 +173,7 @@ fn read_control(ar_bytes: &[u8]) -> Product {
             break;
         }
         offset += size;
-        if size % 2 != 0 {
+        if !size.is_multiple_of(2) {
             offset += 1;
         }
     }

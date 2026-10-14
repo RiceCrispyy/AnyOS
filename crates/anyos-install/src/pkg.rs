@@ -126,7 +126,7 @@ fn parse_package_info(xml: &str) -> (Option<String>, Option<String>) {
     // We just look for the attributes without a full XML parser.
     let id = attr_value(xml, "identifier").map(|s| {
         // Use the last path component as a readable name.
-        s.split('.').last().unwrap_or(&s).to_string()
+        s.split('.').next_back().unwrap_or(s).to_string()
     });
     let version = attr_value(xml, "version").map(String::from);
     (id, version)
@@ -183,12 +183,11 @@ pub(crate) fn install(
                     .map(String::from);
             }
         }
-        match pkg.payload(component) {
-            Ok(data) => match extract_cpio_gz(&data, w) {
+        if let Ok(data) = pkg.payload(component) {
+            match extract_cpio_gz(&data, w) {
                 Ok(n) => total += n,
                 Err(e) => w.note(format!("skipped payload ({e})")),
-            },
-            Err(_) => {}
+            }
         }
     }
 
