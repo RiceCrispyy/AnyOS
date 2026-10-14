@@ -269,6 +269,7 @@ impl AnyosApp {
         }
         let mut picked = None;
         let can_run = self.cli.is_some();
+        let busy = self.job.is_some();
         ui.label(RichText::new("Your apps").strong());
         egui::ScrollArea::vertical()
             .max_height(ui.available_height() * 0.6)
@@ -290,7 +291,7 @@ impl AnyosApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let main = app.programs.first();
                             if app.programs.len() > 1 {
-                                ui.add_enabled_ui(can_run, |ui| {
+                                ui.add_enabled_ui(can_run && !busy, |ui| {
                                     ui.menu_button("More", |ui| {
                                         for (label, path) in &app.programs {
                                             if ui.button(format!("Run {label}")).clicked() {
@@ -318,10 +319,11 @@ impl AnyosApp {
                                 Some(_) if !can_run => {
                                     "The anyos command-line tool was not found.".to_string()
                                 }
+                                Some(_) if busy => "Another program is already running.".to_string(),
                                 Some((label, _)) => format!("Run {label}"),
                             };
                             let r = ui
-                                .add_enabled(main.is_some() && can_run, run)
+                                .add_enabled(main.is_some() && can_run && !busy, run)
                                 .on_hover_text(&hover)
                                 .on_disabled_hover_text(&hover);
                             if r.clicked() {
