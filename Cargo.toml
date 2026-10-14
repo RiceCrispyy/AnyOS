@@ -46,6 +46,10 @@ cab = "0.6"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "lzma"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 lzma-rust2 = { version = "0.22", default-features = false, features = ["std"] }
+tar = "0.4"
+xz2 = "0.1"
+zstd = { version = "0.14", default-features = false }
+xara = "0.4"
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
 
 [profile.release]

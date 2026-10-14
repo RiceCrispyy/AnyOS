@@ -7,15 +7,18 @@
 //! actions, scripts) is skipped and listed in the app's notes.
 //!
 //! Supported now: Windows Installer packages (`.msi`), NSIS installers, ZIP
-//! and 7-Zip archives, and ZIP or 7-Zip self-extracting `.exe` files. Other installers are
-//! recognised (see `anyos-package`) and refused with the reason.
+//! and 7-Zip archives, ZIP or 7-Zip self-extracting `.exe` files, Debian
+//! packages (`.deb`), and macOS flat installer packages (`.pkg`). Other
+//! installers are recognised (see `anyos-package`) and refused with a reason.
 //!
 //! Every file is placed through `Env::host_path`, so a hostile package cannot
 //! write outside the environment.
 
 mod archive;
+mod deb;
 mod msi;
 mod nsis;
+mod pkg;
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -192,6 +195,8 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         PackageKind::SevenZip | PackageKind::SevenZipSfx => {
             archive::sevenz_product(payload, &stem)?
         }
+        PackageKind::Deb => deb::product(&bytes, &stem)?,
+        PackageKind::MacPkg => pkg::product(&bytes, &stem)?,
         other => return Err(unsupported(other)),
     };
 
@@ -206,6 +211,8 @@ pub fn install(env: &Env, path: &Path) -> Result<InstallReport, InstallError> {
         (PackageKind::Zip | PackageKind::ZipSfx, _) => {
             archive::install_zip(&mut w, payload, &product)
         }
+        (PackageKind::Deb, _) => deb::install(&mut w, &bytes, &product),
+        (PackageKind::MacPkg, _) => pkg::install(&mut w, &bytes, &product),
         _ => archive::install_7z(&mut w, payload, &product),
     };
     let installed = match result {
@@ -325,11 +332,12 @@ fn unsupported(kind: PackageKind) -> InstallError {
         PackageKind::MsiPatch | PackageKind::MsiTransform => {
             "patches and transforms apply to an installed MSI; install the main .msi"
         }
-        PackageKind::Deb
-        | PackageKind::Rpm
-        | PackageKind::AppImage
-        | PackageKind::MacPkg
-        | PackageKind::Dmg => "Linux and macOS packages are planned after the Windows formats",
+        PackageKind::Rpm | PackageKind::AppImage => {
+            "this Linux package format is planned in a later milestone"
+        }
+        PackageKind::Dmg => {
+            "macOS disk images require HFS+ or APFS support and are not yet implemented"
+        }
         _ => "not supported",
     };
     InstallError::Unsupported {

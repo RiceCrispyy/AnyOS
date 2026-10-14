@@ -17,6 +17,10 @@ zip.workspace = true
 sevenz-rust2.workspace = true
 flate2.workspace = true
 lzma-rust2.workspace = true
+tar.workspace = true
+xz2.workspace = true
+zstd.workspace = true
+xara.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

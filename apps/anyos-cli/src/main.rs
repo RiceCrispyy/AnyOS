@@ -678,6 +678,8 @@ fn print_package(p: &Package) {
             | PackageKind::ZipSfx
             | PackageKind::SevenZip
             | PackageKind::SevenZipSfx
+            | PackageKind::Deb
+            | PackageKind::MacPkg
     ) {
         println!("  `anyos install` does not support this kind yet.");
     }

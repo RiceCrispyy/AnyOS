@@ -500,7 +500,7 @@ fn unsupported_and_unknown_files_are_refused() {
     let deb = scratch.file("tool.deb", b"!<arch>\ndebian-binary   0");
     assert!(matches!(
         install(&env, &deb),
-        Err(InstallError::Unsupported { .. })
+        Err(InstallError::Malformed { .. })
     ));
     let text = scratch.file("notes.txt", b"hello");
     assert!(matches!(
