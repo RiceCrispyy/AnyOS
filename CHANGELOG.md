@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 **Added**
 
+- Self-update (`anyos-update`). `anyos update` installs the newest GitHub release
+  for this platform after checking it against `SHA256SUMS`; `--check` only
+  reports. The desktop app checks on start and offers **Update and restart**,
+  plus a **Check for updates** button. The running copy is swapped in place:
+  `anyos` and `anyos-gui` beside it, the whole `AnyOS.app` on macOS, and on
+  Windows the running `.exe` is renamed to `.old` and removed on the next launch.
+  `--no-update-check` or `ANYOS_NO_UPDATE_CHECK=1` turns automatic checks off.
+  Release builds now report the tag's version (`anyos --version`).
 - `anyos-gui` — a desktop app for macOS, Windows and Linux (egui). Drop or choose
   a program (Windows `.exe`, Linux ELF, macOS Mach-O or `.app`, installers) to see
   its format, target OS and CPU and how AnyOS would run it, then run it and watch
