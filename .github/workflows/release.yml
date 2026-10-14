@@ -1,0 +1,152 @@
+name: Release
+
+# Pushing a tag like `v0.2.0` builds `anyos` for Linux, Windows and macOS and
+# attaches the archives to the GitHub release for that tag (creating the release
+# if it does not exist yet). Pull requests that touch this file, and manual runs,
+# build and upload the archives as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build liblzma from source instead of linking the runner's shared copy, so the
+  # binaries do not depend on liblzma being installed on the user's machine.
+  LZMA_API_STATIC: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x86-64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS universal
+            os: macos-latest
+            target: universal2-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'universal2-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+
+      - name: Install zig
+        if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      # Linux: link against glibc 2.17 so the binary runs on older distributions too.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo zigbuild --release --locked -p anyos-cli --target x86_64-unknown-linux-gnu.2.17
+
+      # Windows: link the C runtime statically so no Visual C++ redistributable is needed.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked -p anyos-cli --target x86_64-pc-windows-msvc
+
+      # macOS: one universal binary that runs natively on Apple Silicon and Intel Macs.
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release --locked -p anyos-cli --target aarch64-apple-darwin
+          cargo build --release --locked -p anyos-cli --target x86_64-apple-darwin
+          mkdir -p target/universal2-apple-darwin/release
+          lipo -create -output target/universal2-apple-darwin/release/anyos \
+            target/aarch64-apple-darwin/release/anyos \
+            target/x86_64-apple-darwin/release/anyos
+          lipo -info target/universal2-apple-darwin/release/anyos
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          name="anyos-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            bin="target/${{ matrix.target }}/release/anyos.exe"
+          else
+            bin="target/${{ matrix.target }}/release/anyos"
+          fi
+          cp "$bin" README.md LICENSE.md CHANGELOG.md "dist/$name/"
+          "dist/$name/$(basename "$bin")" --version
+          cd dist
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            archive="$name.zip"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            shasum -a 256 "$archive" > "$archive.sha256"
+          else
+            sha256sum "$archive" > "$archive.sha256"
+          fi
+          echo "ARCHIVE=dist/$archive" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anyos-${{ matrix.target }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 > dist/SHA256SUMS
+          rm dist/*.sha256
+          ls -l dist
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "AnyOS $TAG" --generate-notes --verify-tag
+          fi
