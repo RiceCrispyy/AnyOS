@@ -9,6 +9,8 @@
 
 use crate::api::*;
 use crate::thread::{Halt, Thread};
+use anyos_ui::{MessageType, UIBackend, WindowParams};
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Fake handle allocation
@@ -250,20 +252,75 @@ fn create_window_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64
     } else {
         read_str(t, title_ptr, wide).unwrap_or_default()
     };
-    let hwnd =
-        t.k.ui
-            .create_window(class, title, style, ex_style, x, y, w, h, parent, id);
+
+    // Create in legacy UI state for compatibility
+    let hwnd = t.k.ui.create_window(
+        class.clone(),
+        title.clone(),
+        style,
+        ex_style,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        id,
+    );
+
+    // Also try to create through UIBackend if available
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let params = WindowParams {
+            parent: anyos_ui::WindowHandle::from_u64(parent),
+            class,
+            title,
+            style,
+            ex_style,
+            rect: anyos_ui::graphics::Rect {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            instance: 0,
+            user_data: 0,
+            menu: 0,
+            id: id as u32,
+        };
+
+        if let Ok(ui_handle) = backend.create_window(params) {
+            // Map the Win32 HWND to the UIBackend handle
+            t.k.hwnd_map.insert(hwnd, ui_handle);
+        }
+    }
+
     Ok(hwnd)
 }
 
 fn destroy_window(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let hwnd = a[0];
+
+    // Destroy through UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.remove(&hwnd) {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let _ = backend.destroy_window(ui_handle);
+        }
+    }
+
     t.k.ui.windows.retain(|w| w.hwnd != hwnd);
     Ok(1)
 }
 
 fn show_window(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, cmd) = (a[0], a[1]);
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let visible = cmd != 0; // SW_HIDE = 0
+            let _ = backend.show_window(ui_handle, visible);
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         let was_visible = w.visible;
         w.visible = cmd != 0; // SW_HIDE = 0
@@ -286,6 +343,14 @@ fn get_window_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64,
 fn set_window_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, ptr) = (a[0], a[1]);
     let text = read_str(t, ptr, wide).unwrap_or_default();
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let _ = backend.set_window_title(ui_handle, &text);
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         w.title = text;
     }
@@ -298,6 +363,22 @@ fn set_window_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let flags = a[6] as u32;
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_NOSIZE: u32 = 0x0001;
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            if (flags & SWP_NOMOVE == 0) || (flags & SWP_NOSIZE == 0) {
+                let rect = anyos_ui::graphics::Rect {
+                    left: x,
+                    top: y,
+                    right: x + cx,
+                    bottom: y + cy,
+                };
+                let _ = backend.set_window_rect(ui_handle, rect);
+            }
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         if flags & SWP_NOMOVE == 0 {
             w.x = x;
@@ -359,6 +440,44 @@ fn peek_get_message(
     blocking: bool,
 ) -> Result<u64, Halt> {
     let msg_ptr = a[0];
+
+    // Try to pump a message from UIBackend first
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let timeout = if blocking {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(0)
+        };
+        if let Ok(Some(ui_msg)) = backend.pump_message(timeout) {
+            // Convert UIBackend message to Win32 MSG
+            let message = match ui_msg.msg_type {
+                MessageType::Quit => WM_QUIT,
+                MessageType::Paint => WM_PAINT,
+                MessageType::KeyDown => 0x0100,          // WM_KEYDOWN
+                MessageType::KeyUp => 0x0101,            // WM_KEYUP
+                MessageType::Char => 0x0102,             // WM_CHAR
+                MessageType::MouseMove => 0x0200,        // WM_MOUSEMOVE
+                MessageType::LeftButtonDown => 0x0201,   // WM_LBUTTONDOWN
+                MessageType::LeftButtonUp => 0x0202,     // WM_LBUTTONUP
+                MessageType::RightButtonDown => 0x0204,  // WM_RBUTTONDOWN
+                MessageType::RightButtonUp => 0x0205,    // WM_RBUTTONUP
+                MessageType::MiddleButtonDown => 0x0207, // WM_MBUTTONDOWN
+                MessageType::MiddleButtonUp => 0x0208,   // WM_MBUTTONUP
+                MessageType::Other(code) => code,
+            };
+
+            let m = Msg {
+                hwnd: ui_msg.hwnd.as_u64(),
+                message,
+                wparam: ui_msg.wparam,
+                lparam: ui_msg.lparam,
+                time: ui_msg.time,
+            };
+            write_msg(t, msg_ptr, &m);
+            return Ok(1);
+        }
+    }
+
     // Check for WM_QUIT first
     if let Some(code) = t.k.ui.quit.take() {
         let m = Msg {

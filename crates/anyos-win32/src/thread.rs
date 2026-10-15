@@ -396,6 +396,10 @@ impl<'a, 'b> Thread<'a, 'b> {
         t.process
             .memory
             .write_ptr_raw(peb + layout.peb_process_heap, p, heap)?;
+
+        // Initialize the UI manager's platform backend
+        let _ = t.k.ui_manager.init_platform_backend();
+
         crate::file::init(&mut t, program_dir.as_deref(), &opts.env);
         crate::registry::init(&mut t);
         Ok(t)
