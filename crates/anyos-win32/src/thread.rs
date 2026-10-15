@@ -39,6 +39,8 @@ pub(crate) enum Halt {
     ExitThread(u32),
     /// The API call has to wait: run other threads, then call it again.
     Block,
+    /// Replace the entire CPU context (used by SwitchToFiber).
+    SwitchContext(X86Context),
     Error(RunError),
     /// The API has already set `ctx` to the desired execution state (e.g.
     /// after a successful SEH `ExceptionContinueExecution`). The dispatcher
@@ -419,6 +421,9 @@ impl<'a, 'b> Thread<'a, 'b> {
             Err(Halt::Block) => Err(RunError::Deadlock {
                 detail: "a wait could not be resumed".into(),
             }),
+            Err(Halt::SwitchContext(_)) => Err(RunError::Deadlock {
+                detail: "SwitchToFiber used without a fiber context".into(),
+            }),
             Err(Halt::Error(e)) => Err(e),
             // DirectResume is handled inside call_from; it should not bubble here.
             Err(Halt::DirectResume) => Err(RunError::Deadlock {
@@ -521,7 +526,7 @@ impl<'a, 'b> Thread<'a, 'b> {
 
     /// Set up `ctx` to call `target` with `args` on a stack whose top is
     /// `stack_top`, returning to the sentinel.
-    fn push_frame(
+    pub(crate) fn push_frame(
         &mut self,
         ctx_is_current: bool,
         stack_top: u64,
@@ -901,6 +906,7 @@ impl<'a, 'b> Thread<'a, 'b> {
                 Err(Halt::Exit(code)) => format!("exit {code}"),
                 Err(Halt::ExitThread(code)) => format!("thread exit {code}"),
                 Err(Halt::Block) => "wait".into(),
+                Err(Halt::SwitchContext(_)) => "switch".into(),
                 Err(Halt::Error(_)) | Err(Halt::DirectResume) => "error".into(),
             };
             let _ = writeln!(
@@ -911,6 +917,10 @@ impl<'a, 'b> Thread<'a, 'b> {
                 shown.join(", "),
                 outcome
             );
+        }
+        if let Err(Halt::SwitchContext(ctx)) = result {
+            self.ctx = ctx;
+            return Ok(());
         }
         let value = result?;
         self.ret(api, value)
