@@ -18,6 +18,7 @@
 
 mod api;
 mod console;
+mod dialogs;
 mod file;
 mod heap;
 mod locale;

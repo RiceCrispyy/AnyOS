@@ -7,7 +7,10 @@ pub mod platform;
 pub mod window;
 pub mod graphics;
 
-pub use window::{Window, WindowParams, WindowHandle, Message, MessageType};
+pub use window::{
+    Window, WindowParams, WindowHandle, Message, MessageType,
+    DialogTemplate, DialogControl, ControlType,
+};
 pub use graphics::{DrawingContext, Color, Rect, Point};
 
 use std::time::Duration;
@@ -39,6 +42,7 @@ pub type UIResult<T> = Result<T, UIError>;
 /// Implementations provide:
 /// - Window creation and destruction
 /// - Drawing contexts and graphics operations
+/// - Dialog box creation (Phase 3)
 /// - Event loop handling
 /// - Platform-specific optimizations
 pub trait UIBackend: Send + Sync {
@@ -94,6 +98,40 @@ pub trait UIBackend: Send + Sync {
 
     /// Move/resize window
     fn set_window_rect(&mut self, handle: WindowHandle, rect: Rect) -> UIResult<()>;
+
+    /// Create a modal dialog box (Phase 3)
+    /// Returns a dialog handle and sets the result code when closed
+    fn create_dialog_modal(
+        &mut self,
+        parent: WindowHandle,
+        template: &DialogTemplate,
+    ) -> UIResult<i32> {
+        let _ = (parent, template);
+        Err(UIError::NotSupported)
+    }
+
+    /// Create a modeless dialog box (Phase 3)
+    /// Returns a handle to the dialog
+    fn create_dialog_modeless(
+        &mut self,
+        parent: WindowHandle,
+        template: &DialogTemplate,
+    ) -> UIResult<WindowHandle> {
+        let _ = (parent, template);
+        Err(UIError::NotSupported)
+    }
+
+    /// Destroy a dialog box (Phase 3)
+    fn destroy_dialog(&mut self, handle: WindowHandle) -> UIResult<()> {
+        let _ = handle;
+        Err(UIError::NotSupported)
+    }
+
+    /// End a modal dialog with a result code (Phase 3)
+    fn end_dialog(&mut self, handle: WindowHandle, result: i32) -> UIResult<()> {
+        let _ = (handle, result);
+        Err(UIError::NotSupported)
+    }
 }
 
 /// Global UI state manager

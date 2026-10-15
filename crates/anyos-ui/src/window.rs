@@ -78,6 +78,84 @@ pub struct Window {
     pub parent: WindowHandle,
 }
 
+/// Dialog box control types (Phase 3)
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ControlType {
+    Button,
+    Static,
+    Edit,
+    ListBox,
+    ComboBox,
+    ScrollBar,
+}
+
+impl ControlType {
+    pub fn from_class_name(name: &str) -> Option<Self> {
+        match name {
+            "BUTTON" => Some(ControlType::Button),
+            "STATIC" => Some(ControlType::Static),
+            "EDIT" => Some(ControlType::Edit),
+            "LISTBOX" => Some(ControlType::ListBox),
+            "COMBOBOX" => Some(ControlType::ComboBox),
+            "SCROLLBAR" => Some(ControlType::ScrollBar),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            ControlType::Button => "BUTTON",
+            ControlType::Static => "STATIC",
+            ControlType::Edit => "EDIT",
+            ControlType::ListBox => "LISTBOX",
+            ControlType::ComboBox => "COMBOBOX",
+            ControlType::ScrollBar => "SCROLLBAR",
+        }
+    }
+}
+
+/// Dialog control descriptor
+#[derive(Debug, Clone)]
+pub struct DialogControl {
+    pub id: u32,
+    pub control_type: ControlType,
+    pub title: String,
+    pub style: u32,
+    pub ex_style: u32,
+    pub rect: Rect,
+}
+
+/// Dialog template for creating dialogs with controls
+#[derive(Debug, Clone)]
+pub struct DialogTemplate {
+    pub title: String,
+    pub style: u32,
+    pub ex_style: u32,
+    pub rect: Rect,
+    pub font_name: String,
+    pub font_size: u16,
+    pub controls: Vec<DialogControl>,
+}
+
+impl Default for DialogTemplate {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            style: WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            ex_style: 0,
+            rect: Rect {
+                left: 100,
+                top: 100,
+                right: 500,
+                bottom: 400,
+            },
+            font_name: "MS Shell Dlg".to_string(),
+            font_size: 8,
+            controls: Vec::new(),
+        }
+    }
+}
+
 /// Message types
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MessageType {
@@ -93,6 +171,9 @@ pub enum MessageType {
     RightButtonUp,
     MiddleButtonDown,
     MiddleButtonUp,
+    InitDialog,
+    Command,
+    Close,
     Other(u32),
 }
 
@@ -163,6 +244,9 @@ pub mod styles {
     /// Window has border
     pub const WS_BORDER: u32 = 0x800000;
 }
+
+// Re-export window style constants at module level for convenience
+pub use styles::*;
 
 #[cfg(test)]
 mod tests {

@@ -613,16 +613,27 @@ fn message_box(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
 }
 
 fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, Halt> {
-    // Create a fake dialog window, call initproc, run the message loop until
-    // EndDialog is called.
+    // DialogBoxParam: create a modal dialog from a resource template
+    // Parameters: HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent,
+    //            DLGPROC lpDialogFunc, LPARAM dwInitParam
     let (_hinstance, _template, parent, dlg_proc, init_param) = (a[0], a[1], a[2], a[3], a[4]);
     if dlg_proc == 0 {
         return Ok(0);
     }
+
+    // Phase 3: Create dialog with proper styling
+    const WS_VISIBLE: u32 = 0x1000_0000;
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_CAPTION: u32 = 0xC00000;
+    const WS_SYSMENU: u32 = 0x80000;
+    const WS_DLGFRAME: u32 = 0x400000;
+
+    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_DLGFRAME | WS_VISIBLE;
+
     let hwnd = t.k.ui.create_window(
         "Dialog".into(),
         String::new(),
-        WS_VISIBLE,
+        style,
         0,
         100,
         100,
@@ -631,19 +642,35 @@ fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u6
         parent,
         0,
     );
-    // Post WM_INITDIALOG so the dialog proc runs on the next DispatchMessage.
+
+    // Store the dialog proc for message routing
+    if let Some(w) = t.k.ui.window_mut(hwnd) {
+        w.wnd_proc = dlg_proc;
+    }
+
+    // Post WM_INITDIALOG so the dialog proc runs on the next DispatchMessage
     post(t, hwnd, WM_INITDIALOG, hwnd, init_param);
-    // Return the dialog result (EndDialog stores it).
-    // Since we don't actually pump a nested message loop here, just return 1.
+
+    // Return the dialog result (EndDialog stores it)
+    // In a nested message loop implementation, this would block until EndDialog is called
     Ok(1)
 }
 
 fn end_dialog(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    // EndDialog: terminates a modal dialog and returns a result code
+    // Parameters: HWND hDlg, INT_PTR nResult
     let (hwnd, result) = (a[0], a[1] as i32);
+
+    // Store the dialog result
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         w.dialog_result = Some(result);
+        // Post a WM_CLOSE message to signal the dialog should close
+        post(t, hwnd, WM_CLOSE, 0, 0);
     }
-    t.k.ui.windows.retain(|w| w.hwnd != hwnd);
+
+    // Note: In a real implementation with a nested message loop,
+    // this would unwind the modal loop and return the result code.
+    // For now, we'll keep the window and let the normal message pump handle it.
     Ok(1)
 }
 
@@ -690,6 +717,79 @@ fn get_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u6
         .unwrap_or_default();
     let (n, _) = copy_str_truncate(t, buf, cch as u64, &title, wide);
     Ok(n)
+}
+
+// Phase 3: Dialog control APIs
+fn create_window_ex_dialog(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    // Phase 3: CreateWindowEx for dialog controls
+    // Used by dialog templates to create BUTTON, EDIT, STATIC, etc.
+    let (ex_style, class_ptr, title_ptr, style) = (a[0] as u32, a[1], a[2], a[3] as u32);
+    let (x, y, w, h) = (a[4] as i32, a[5] as i32, a[6] as i32, a[7] as i32);
+    let (parent, id) = (a[8], a[9] as u32);
+
+    let class = if class_ptr < 0xC000 {
+        format!("#{}", class_ptr)
+    } else {
+        read_str(t, class_ptr, wide).unwrap_or_default()
+    };
+
+    let title = if title_ptr == 0 {
+        String::new()
+    } else {
+        read_str(t, title_ptr, wide).unwrap_or_default()
+    };
+
+    // Create the control as a child window
+    let hwnd = t.k.ui.create_window(
+        class.clone(),
+        title.clone(),
+        style | WS_CHILD,
+        ex_style,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        id as u64,
+    );
+
+    // Also try to create through UIBackend if available
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let params = WindowParams {
+            parent: anyos_ui::WindowHandle::from_u64(parent),
+            class,
+            title,
+            style: style | WS_CHILD,
+            ex_style,
+            rect: anyos_ui::graphics::Rect {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            instance: 0,
+            user_data: 0,
+            menu: 0,
+            id,
+        };
+
+        if let Ok(ui_handle) = backend.create_window(params) {
+            // Map the Win32 HWND to the UIBackend handle
+            t.k.hwnd_map.insert(hwnd, ui_handle);
+        }
+    }
+
+    Ok(hwnd)
+}
+
+fn is_dialog_message(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    // IsDialogMessage: checks if a message is intended for the dialog
+    // Phase 3: Would pre-process keyboard messages for tab order, etc.
+    let _hwnd = a[0];
+    let _msg_ptr = a[1];
+
+    // For now, return FALSE (message not handled)
+    Ok(0)
 }
 
 // ---------------------------------------------------------------------------
