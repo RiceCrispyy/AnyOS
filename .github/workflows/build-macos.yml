@@ -32,10 +32,10 @@ jobs:
           echo "HOST: $(uname -m)"
 
       - name: Build workspace for aarch64-apple-darwin
-        run: cargo build --release --locked --workspace --target aarch64-apple-darwin
+        run: cargo build --release --workspace --target aarch64-apple-darwin
 
       - name: Build workspace for x86_64-apple-darwin
-        run: cargo build --release --locked --workspace --target x86_64-apple-darwin
+        run: cargo build --release --workspace --target x86_64-apple-darwin
 
       - name: Create universal2 binaries
         run: |
