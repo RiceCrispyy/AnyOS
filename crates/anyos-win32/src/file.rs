@@ -2436,10 +2436,10 @@ fn create_symbolic_link(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result
     #[cfg(unix)]
     {
         match std::os::unix::fs::symlink(&target_host, &link_host) {
-            Ok(()) => return Ok(1),
+            Ok(()) => Ok(1),
             Err(e) => {
                 let code = io_error(&e, &link_host);
-                return fail(t, code, 0);
+                fail(t, code, 0)
             }
         }
     }
