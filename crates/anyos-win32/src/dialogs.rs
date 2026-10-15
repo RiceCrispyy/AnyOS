@@ -5,7 +5,7 @@
 
 use crate::api::*;
 use crate::thread::{Halt, Thread};
-use anyos_ui::{DialogTemplate, DialogControl, ControlType};
+use anyos_ui::{ControlType, DialogControl, DialogTemplate};
 use std::collections::HashMap;
 
 /// Dialog template resource structure for DialogBoxIndirect
@@ -37,10 +37,7 @@ pub struct DialogControlResource {
 }
 
 /// Parse a dialog template from memory (DialogBoxIndirect support)
-pub fn parse_dialog_template(
-    t: &Thread<'_, '_>,
-    template_ptr: u64,
-) -> Option<DialogResource> {
+pub fn parse_dialog_template(t: &Thread<'_, '_>, template_ptr: u64) -> Option<DialogResource> {
     // DLGTEMPLATE structure:
     // DWORD style
     // DWORD dwExtendedStyle
