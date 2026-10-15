@@ -19,6 +19,7 @@
 mod api;
 mod console;
 mod file;
+mod seh;
 mod heap;
 mod locale;
 mod memory;

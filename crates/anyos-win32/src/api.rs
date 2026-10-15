@@ -136,12 +136,30 @@ static CORE: &[Api] = &[
     // EXCEPTION_EXECUTE_HANDLER: let the caller terminate.
     k32("UnhandledExceptionFilter", 1, |_, _| Ok(1)),
     k32("RaiseException", 4, |t, a| {
-        let location = t.describe(read_ret_addr(t));
-        Err(crate::RunError::GuestException {
-            code: a[0] as u32,
-            location,
+        let code = a[0] as u32;
+        let flags = a[1] as u32;
+        let n_params = (a[2] as u32).min(15) as usize;
+        // Read ExceptionInformation array (pointer in a[3]).
+        let mut params = Vec::with_capacity(n_params);
+        if n_params > 0 && a[3] != 0 {
+            for i in 0..n_params {
+                if let Some(p) = read_u32(t, a[3] + i as u64 * 4) {
+                    params.push(p as u64);
+                }
+            }
         }
-        .into())
+        let exception_addr = read_ret_addr(t);
+        if !t.long_mode() {
+            // x86: walk the per-thread SEH chain (FS:[0]).
+            crate::seh::dispatch_exception_32(t, code, flags, exception_addr, &params)
+        } else {
+            // x64: table-based unwind not yet supported; report the exception.
+            Err(crate::RunError::GuestException {
+                code,
+                location: t.describe(exception_addr),
+            }
+            .into())
+        }
     }),
     k32("RaiseFailFastException", 3, |_, _| {
         Err(Halt::Exit(0xC000_0409))

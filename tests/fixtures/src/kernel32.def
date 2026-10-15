@@ -79,3 +79,6 @@ EXPORTS
   GetWindowsDirectoryA@8
   GetSystemDirectoryA@8
   FormatMessageA@28
+  wsprintfA
+  wsprintfW
+  RaiseException@16
