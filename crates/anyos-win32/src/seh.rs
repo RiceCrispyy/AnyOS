@@ -26,7 +26,7 @@ use crate::RunError;
 /// `CONTEXT`.
 pub(crate) const EXCEPTION_CONTINUE_EXECUTION: u64 = 0;
 /// This handler is not interested; try the next one in the chain.
-pub(crate) const EXCEPTION_CONTINUE_SEARCH: u64 = 1;
+pub(crate) const _EXCEPTION_CONTINUE_SEARCH: u64 = 1;
 
 // ---------------------------------------------------------------------------
 // EXCEPTION_RECORD layout (32-bit, flat offsets in bytes).
@@ -90,7 +90,7 @@ fn write_exception_record_32(
     params: &[u64],
 ) -> bool {
     let n = params.len().min(EXCEPTION_MAXIMUM_PARAMETERS) as u32;
-    write_u32(t, addr + 0x00, code)
+    write_u32(t, addr, code)
         && write_u32(t, addr + 0x04, flags)
         && write_u32(t, addr + 0x08, 0) // next record: NULL
         && write_u32(t, addr + 0x0C, exception_addr as u32)
