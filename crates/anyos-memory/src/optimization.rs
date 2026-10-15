@@ -6,8 +6,8 @@
 //! - Cache-friendly data layout
 //! - Heap optimization
 
-use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 /// Object pool for reducing allocations
 pub struct ObjectPool<T> {

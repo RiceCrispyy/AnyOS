@@ -5,20 +5,22 @@
 
 use crate::{
     graphics::{Color, Rect},
-    window::{WindowHandle, WindowParams, Window, Message, MessageType, DialogTemplate, ControlType},
+    window::{
+        ControlType, DialogTemplate, Message, MessageType, Window, WindowHandle, WindowParams,
+    },
     UIBackend, UIError, UIResult,
 };
-use std::collections::HashMap;
-use std::time::Duration;
-use objc::{class, msg_send};
-use objc::runtime::Object;
-use objc_foundation::{NSString, INSString};
-use cocoa::foundation::{NSRect, NSPoint, NSSize};
-use cocoa::appkit::{NSWindow, NSWindowStyleMask, NSBackingStoreType};
-use core_graphics::context::CGContext;
-use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+use cocoa::appkit::{NSBackingStoreType, NSWindow, NSWindowStyleMask};
+use cocoa::foundation::{NSPoint, NSRect, NSSize};
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
+use core_graphics::context::CGContext;
+use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+use objc::runtime::Object;
+use objc::{class, msg_send};
+use objc_foundation::{INSString, NSString};
+use std::collections::HashMap;
+use std::time::Duration;
 
 /// Drawing operation for recording drawing commands
 #[derive(Debug, Clone)]
@@ -189,10 +191,7 @@ impl MacOSBackend {
             // Create NSRect from our Rect
             let ns_rect = NSRect::new(
                 NSPoint::new(rect.left as f64, rect.top as f64),
-                NSSize::new(
-                    rect.width() as f64,
-                    rect.height() as f64,
-                ),
+                NSSize::new(rect.width() as f64, rect.height() as f64),
             );
 
             // Allocate NSWindow
@@ -396,7 +395,8 @@ impl UIBackend for MacOSBackend {
         self.windows.insert(handle, window);
 
         // Post a paint message so the window can be rendered
-        self.message_queue.push_back(Message::new(handle, MessageType::Paint));
+        self.message_queue
+            .push_back(Message::new(handle, MessageType::Paint));
 
         Ok(handle)
     }
@@ -450,14 +450,7 @@ impl UIBackend for MacOSBackend {
         )
     }
 
-    fn text_out(
-        &mut self,
-        dc: u64,
-        x: i32,
-        y: i32,
-        text: &str,
-        color: Color,
-    ) -> UIResult<()> {
+    fn text_out(&mut self, dc: u64, x: i32, y: i32, text: &str, color: Color) -> UIResult<()> {
         let state = self.get_drawing_state_mut(dc)?;
         state.current_x = x;
         state.current_y = y;
@@ -493,8 +486,10 @@ impl UIBackend for MacOSBackend {
             width: pen_width,
         });
 
-        eprintln!("line_to from ({}, {}) to ({}, {}) color={:?} width={}",
-                  x1, y1, x2, y2, pen_color, pen_width);
+        eprintln!(
+            "line_to from ({}, {}) to ({}, {}) color={:?} width={}",
+            x1, y1, x2, y2, pen_color, pen_width
+        );
         Ok(())
     }
 
@@ -515,8 +510,10 @@ impl UIBackend for MacOSBackend {
             width,
         });
 
-        eprintln!("rectangle at ({}, {}, {}, {}) filled={} color={:?} width={}",
-                  rect.left, rect.top, rect.right, rect.bottom, filled, color, width);
+        eprintln!(
+            "rectangle at ({}, {}, {}, {}) filled={} color={:?} width={}",
+            rect.left, rect.top, rect.right, rect.bottom, filled, color, width
+        );
         Ok(())
     }
 
@@ -526,8 +523,10 @@ impl UIBackend for MacOSBackend {
         // Record the fill rect operation
         state.operations.push(DrawingOp::FillRect { rect, color });
 
-        eprintln!("fill_rect at ({}, {}, {}, {}) color={:?}",
-                  rect.left, rect.top, rect.right, rect.bottom, color);
+        eprintln!(
+            "fill_rect at ({}, {}, {}, {}) color={:?}",
+            rect.left, rect.top, rect.right, rect.bottom, color
+        );
         Ok(())
     }
 
@@ -746,11 +745,7 @@ impl UIBackend for MacOSBackend {
     /// Render queued drawing operations using CoreGraphics
     /// This is typically called from NSView's drawRect: callback
     #[allow(dead_code)]
-    fn render_drawing_operations(
-        &self,
-        dc: u64,
-        _context: *mut CGContext,
-    ) -> UIResult<()> {
+    fn render_drawing_operations(&self, dc: u64, _context: *mut CGContext) -> UIResult<()> {
         if let Some(state) = self.drawing_states.get(&dc) {
             for op in &state.operations {
                 match op {

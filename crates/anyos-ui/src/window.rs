@@ -260,8 +260,7 @@ mod tests {
 
     #[test]
     fn test_message_construction() {
-        let msg = Message::new(WindowHandle(1), MessageType::Quit)
-            .with_params(0, 0);
+        let msg = Message::new(WindowHandle(1), MessageType::Quit).with_params(0, 0);
 
         assert_eq!(msg.hwnd, WindowHandle(1));
         assert_eq!(msg.msg_type, MessageType::Quit);

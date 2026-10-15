@@ -90,8 +90,7 @@ pub fn resource_to_template(resource: &DialogResource, title: &str) -> DialogTem
             .iter()
             .map(|c| DialogControl {
                 id: c.id as u32,
-                control_type: ControlType::from_class_name(&c.class)
-                    .unwrap_or(ControlType::Static),
+                control_type: ControlType::from_class_name(&c.class).unwrap_or(ControlType::Static),
                 title: c.title.clone(),
                 style: c.style,
                 ex_style: c.ex_style,

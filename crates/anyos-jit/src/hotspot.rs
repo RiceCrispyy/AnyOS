@@ -3,9 +3,9 @@
 //! Identifies frequently-called functions and marks them for JIT compilation.
 //! Uses profile-guided optimization to improve compilation efficiency.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 /// A detected hotspot (frequently-executed code region)
 #[derive(Debug, Clone)]
@@ -68,7 +68,9 @@ impl HotspotDetector {
 
     /// Get all detected hotspots
     pub fn get_hotspots(&self) -> Vec<Hotspot> {
-        self.hotspots.lock().unwrap()
+        self.hotspots
+            .lock()
+            .unwrap()
             .iter()
             .map(|(_, hs)| hs.clone())
             .collect()
@@ -76,7 +78,9 @@ impl HotspotDetector {
 
     /// Get hotspots ready for compilation (high visit count, not yet compiled)
     pub fn get_ready_for_compilation(&self) -> Vec<Hotspot> {
-        self.hotspots.lock().unwrap()
+        self.hotspots
+            .lock()
+            .unwrap()
             .iter()
             .filter(|(_, hotspot)| {
                 hotspot.visit_count > self.threshold
@@ -129,7 +133,7 @@ mod tests {
         let detector = HotspotDetector::new();
         detector.mark_hotspot(0x1000);
         detector.mark_hotspot(0x2000);
-        detector.mark_hotspot(0x1000);  // Duplicate, should not create new entry
+        detector.mark_hotspot(0x1000); // Duplicate, should not create new entry
 
         assert_eq!(detector.count(), 2);
     }

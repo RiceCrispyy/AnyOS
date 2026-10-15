@@ -32,12 +32,42 @@ impl Color {
     }
 
     // Common colors
-    pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
-    pub const BLACK: Color = Color { r: 0, g: 0, b: 0, a: 255 };
-    pub const RED: Color = Color { r: 255, g: 0, b: 0, a: 255 };
-    pub const GREEN: Color = Color { r: 0, g: 255, b: 0, a: 255 };
-    pub const BLUE: Color = Color { r: 0, g: 0, b: 255, a: 255 };
-    pub const GRAY: Color = Color { r: 128, g: 128, b: 128, a: 255 };
+    pub const WHITE: Color = Color {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    pub const BLACK: Color = Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const RED: Color = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const GREEN: Color = Color {
+        r: 0,
+        g: 255,
+        b: 0,
+        a: 255,
+    };
+    pub const BLUE: Color = Color {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    pub const GRAY: Color = Color {
+        r: 128,
+        g: 128,
+        b: 128,
+        a: 255,
+    };
 }
 
 /// Rectangle
@@ -51,7 +81,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
-        Self { left, top, right, bottom }
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     pub fn width(&self) -> i32 {
@@ -121,7 +156,11 @@ pub struct Pen {
 
 impl Pen {
     pub fn new(style: u32, width: i32, color: Color) -> Self {
-        Self { style, width, color }
+        Self {
+            style,
+            width,
+            color,
+        }
     }
 }
 

@@ -6,10 +6,10 @@
 //! - Proper synchronization primitives
 //! - Work stealing for load balancing
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::collections::HashMap;
 
 /// A lock-free work queue for thread-safe task distribution
 pub struct WorkQueue<T> {

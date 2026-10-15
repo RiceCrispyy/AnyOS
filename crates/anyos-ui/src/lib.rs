@@ -3,16 +3,16 @@
 //! Provides platform-agnostic traits for window creation, drawing, and event handling.
 //! Backends implement these traits for their respective platforms (macOS/Metal, Linux/Vulkan, Windows/Direct3D).
 
-pub mod platform;
-pub mod window;
 pub mod graphics;
 pub mod graphics_optimization;
+pub mod platform;
+pub mod window;
 
+pub use graphics::{Color, DrawingContext, Point, Rect};
 pub use window::{
-    Window, WindowParams, WindowHandle, Message, MessageType,
-    DialogTemplate, DialogControl, ControlType,
+    ControlType, DialogControl, DialogTemplate, Message, MessageType, Window, WindowHandle,
+    WindowParams,
 };
-pub use graphics::{DrawingContext, Color, Rect, Point};
 
 use std::time::Duration;
 use thiserror::Error;
@@ -61,14 +61,7 @@ pub trait UIBackend: Send + Sync {
     fn destroy_dc(&mut self, dc: u64) -> UIResult<()>;
 
     /// Draw text on a device context
-    fn text_out(
-        &mut self,
-        dc: u64,
-        x: i32,
-        y: i32,
-        text: &str,
-        color: Color,
-    ) -> UIResult<()>;
+    fn text_out(&mut self, dc: u64, x: i32, y: i32, text: &str, color: Color) -> UIResult<()>;
 
     /// Draw a line
     fn line_to(&mut self, dc: u64, x1: i32, y1: i32, x2: i32, y2: i32) -> UIResult<()>;

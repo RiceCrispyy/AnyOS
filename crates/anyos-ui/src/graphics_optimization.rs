@@ -65,7 +65,13 @@ impl TextureAtlas {
     }
 
     /// Add a texture region to the atlas
-    pub fn add_region(&self, region_id: u32, texture_data: &[u8], width: u32, height: u32) -> Option<(u32, u32)> {
+    pub fn add_region(
+        &self,
+        region_id: u32,
+        texture_data: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<(u32, u32)> {
         let mut offset = self.next_offset.lock().unwrap();
         let byte_size = (width * height * 4) as usize;
 

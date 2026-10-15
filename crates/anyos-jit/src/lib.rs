@@ -11,17 +11,17 @@
 //! - Seamless fallback to interpreter if issues arise
 
 pub mod codegen;
-pub mod profiler;
-pub mod hotspot;
 pub mod executor;
+pub mod hotspot;
+pub mod profiler;
 pub mod threading;
 
 use anyos_backend::{ExecutionBackend, GuestArch, GuestContext, GuestFault, StopReason};
 use anyos_memory::AddressSpace;
-use std::sync::Arc;
-use std::sync::RwLock as StdRwLock;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::RwLock as StdRwLock;
 use thiserror::Error;
 
 /// Errors that can occur during JIT compilation
@@ -104,7 +104,10 @@ impl JitBackend {
         let compiled = code_gen.compile_region(addr, ctx)?;
 
         let compiled = Arc::new(compiled);
-        self.code_cache.lock().unwrap().insert(addr, compiled.clone());
+        self.code_cache
+            .lock()
+            .unwrap()
+            .insert(addr, compiled.clone());
 
         // Update cache size
         let mut cache_size = self.code_cache_size.lock().unwrap();
@@ -121,11 +124,14 @@ impl JitBackend {
     /// Evict least-recently-used compiled code to make room
     fn evict_code_cache(&self) {
         // Find least recently executed code and remove it
-        if let Some((addr, _)) = self.code_cache.lock().unwrap()
+        if let Some((addr, _)) = self
+            .code_cache
+            .lock()
+            .unwrap()
             .iter()
             .min_by_key(|(_addr, code)| code.execution_count)
-            .map(|(k, v)| (*k, v.clone())) {
-
+            .map(|(k, v)| (*k, v.clone()))
+        {
             if let Some(code) = self.code_cache.lock().unwrap().remove(&addr) {
                 let mut cache_size = self.code_cache_size.lock().unwrap();
                 *cache_size = cache_size.saturating_sub(code.size as usize);

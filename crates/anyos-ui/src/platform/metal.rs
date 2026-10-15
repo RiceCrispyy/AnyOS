@@ -3,8 +3,8 @@
 //! Provides DirectX 9 to Metal translation layer for 3D rendering on macOS.
 
 use crate::UIError;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Metal graphics device
 pub struct MetalGraphicsDevice {
@@ -242,9 +242,11 @@ impl MetalBuffer {
     pub fn write(&mut self, offset: u64, data: &[u8]) -> Result<(), UIError> {
         let end = offset as usize + data.len();
         if end > self.contents.len() {
-            return Err(UIError::DrawingContextError(
-                format!("Buffer write exceeds size: {} > {}", end, self.contents.len())
-            ));
+            return Err(UIError::DrawingContextError(format!(
+                "Buffer write exceeds size: {} > {}",
+                end,
+                self.contents.len()
+            )));
         }
         self.contents[offset as usize..end].copy_from_slice(data);
         Ok(())
@@ -325,22 +327,22 @@ impl MetalDeviceManager {
     }
 
     pub fn destroy_device(&mut self, device_id: u64) -> Result<(), UIError> {
-        self.devices
-            .remove(&device_id)
-            .ok_or_else(|| UIError::InvalidHandle(format!("Graphics device {} not found", device_id)))?;
+        self.devices.remove(&device_id).ok_or_else(|| {
+            UIError::InvalidHandle(format!("Graphics device {} not found", device_id))
+        })?;
         Ok(())
     }
 
     pub fn get_device(&self, device_id: u64) -> Result<&MetalGraphicsDevice, UIError> {
-        self.devices
-            .get(&device_id)
-            .ok_or_else(|| UIError::InvalidHandle(format!("Graphics device {} not found", device_id)))
+        self.devices.get(&device_id).ok_or_else(|| {
+            UIError::InvalidHandle(format!("Graphics device {} not found", device_id))
+        })
     }
 
     pub fn get_device_mut(&mut self, device_id: u64) -> Result<&mut MetalGraphicsDevice, UIError> {
-        self.devices
-            .get_mut(&device_id)
-            .ok_or_else(|| UIError::InvalidHandle(format!("Graphics device {} not found", device_id)))
+        self.devices.get_mut(&device_id).ok_or_else(|| {
+            UIError::InvalidHandle(format!("Graphics device {} not found", device_id))
+        })
     }
 
     pub fn present_device(&mut self, device_id: u64) -> Result<(), UIError> {

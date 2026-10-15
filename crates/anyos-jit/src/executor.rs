@@ -6,9 +6,9 @@
 //! - Execution state tracking
 //! - Performance monitoring
 
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Instant;
-use parking_lot::RwLock;
 
 /// Frame timing information for performance monitoring
 #[derive(Debug, Clone, Copy)]
@@ -242,7 +242,7 @@ mod tests {
             let timing = FrameTiming {
                 start: Instant::now(),
                 end: None,
-                cpu_time: 16_666_666,  // 16.67ms in nanoseconds
+                cpu_time: 16_666_666, // 16.67ms in nanoseconds
                 gpu_time: 0,
             };
             monitor.record_frame(timing);

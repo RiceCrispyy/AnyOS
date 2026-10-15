@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use anyos_jit::profiler::Profiler;
-    use anyos_jit::hotspot::HotspotDetector;
     use anyos_jit::executor::{FrameRateMonitor, MemoryAllocator};
+    use anyos_jit::hotspot::HotspotDetector;
+    use anyos_jit::profiler::Profiler;
     use std::time::Instant;
 
     #[test]
@@ -34,7 +34,11 @@ mod tests {
         }
 
         let elapsed = start.elapsed();
-        println!("Hotspot detection: {} hotspots in {:?}", detector.count(), elapsed);
+        println!(
+            "Hotspot detection: {} hotspots in {:?}",
+            detector.count(),
+            elapsed
+        );
 
         assert_eq!(detector.count(), 10_000);
         assert!(elapsed.as_millis() < 100, "Hotspot detection too slow");
@@ -49,7 +53,7 @@ mod tests {
             let timing = anyos_jit::executor::FrameTiming {
                 start: Instant::now(),
                 end: None,
-                cpu_time: 16_666_667,  // 16.67ms in nanoseconds
+                cpu_time: 16_666_667, // 16.67ms in nanoseconds
                 gpu_time: 0,
             };
             monitor.record_frame(timing);
@@ -57,8 +61,10 @@ mod tests {
 
         let stats = monitor.get_stats();
         assert!(stats.frame_count > 0);
-        println!("Frame stats: avg={:?}ns, min={:?}ns, max={:?}ns, p95={:?}ns",
-            stats.avg, stats.min, stats.max, stats.p95);
+        println!(
+            "Frame stats: avg={:?}ns, min={:?}ns, max={:?}ns, p95={:?}ns",
+            stats.avg, stats.min, stats.max, stats.p95
+        );
     }
 
     #[test]
@@ -79,9 +85,11 @@ mod tests {
         }
 
         let stats = alloc.get_stats();
-        println!("Memory stats: peak={}MB, current={}MB",
+        println!(
+            "Memory stats: peak={}MB, current={}MB",
             stats.peak_usage / (1024 * 1024),
-            stats.current_usage / (1024 * 1024));
+            stats.current_usage / (1024 * 1024)
+        );
 
         assert!(stats.peak_usage > 0);
     }

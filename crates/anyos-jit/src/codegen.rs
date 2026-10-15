@@ -7,9 +7,9 @@
 //! - Function prologues/epilogues
 //! - Common library calls
 
+use crate::profiler::ProfileData;
 use crate::{CompiledCode, JitError};
 use anyos_backend::GuestContext;
-use crate::profiler::ProfileData;
 
 /// ARM64 code generator
 pub struct Arm64Generator {
@@ -19,16 +19,16 @@ pub struct Arm64Generator {
 
 /// ARM64 registers (16 registers available)
 pub mod arm64_regs {
-    pub const X0: u8 = 0;   // Return value, argument
-    pub const X1: u8 = 1;   // Argument
-    pub const X2: u8 = 2;   // Argument
-    pub const X3: u8 = 3;   // Argument
-    pub const X4: u8 = 4;   // Argument
-    pub const X5: u8 = 5;   // Argument
-    pub const X6: u8 = 6;   // Argument
-    pub const X7: u8 = 7;   // Argument
-    pub const X8: u8 = 8;   // Indirect result
-    pub const X9: u8 = 9;   // Temporary
+    pub const X0: u8 = 0; // Return value, argument
+    pub const X1: u8 = 1; // Argument
+    pub const X2: u8 = 2; // Argument
+    pub const X3: u8 = 3; // Argument
+    pub const X4: u8 = 4; // Argument
+    pub const X5: u8 = 5; // Argument
+    pub const X6: u8 = 6; // Argument
+    pub const X7: u8 = 7; // Argument
+    pub const X8: u8 = 8; // Indirect result
+    pub const X9: u8 = 9; // Temporary
     pub const X10: u8 = 10; // Temporary
     pub const X11: u8 = 11; // Temporary
     pub const X12: u8 = 12; // Temporary
@@ -50,7 +50,7 @@ pub mod arm64_regs {
     pub const X28: u8 = 28; // Callee-saved
     pub const X29: u8 = 29; // Frame pointer
     pub const X30: u8 = 30; // Link register
-    pub const SP: u8 = 31;  // Stack pointer
+    pub const SP: u8 = 31; // Stack pointer
 }
 
 impl Arm64Generator {
@@ -71,10 +71,8 @@ impl Arm64Generator {
     fn emit_movz(&mut self, rd: u8, imm: u16, shift: u8) {
         // MOVZ Xd, #imm, LSL #shift
         // sf=1 (64-bit), opc=10
-        let instr = 0xD2800000u32
-            | ((shift as u32 & 0x3) << 21)
-            | ((imm as u32) << 5)
-            | (rd as u32);
+        let instr =
+            0xD2800000u32 | ((shift as u32 & 0x3) << 21) | ((imm as u32) << 5) | (rd as u32);
         self.emit_u32(instr);
     }
 
@@ -82,20 +80,14 @@ impl Arm64Generator {
     fn emit_add(&mut self, rd: u8, rn: u8, rm: u8) {
         // ADD Xd, Xn, Xm
         // sf=1, op=0
-        let instr = 0x8B000000u32
-            | ((rm as u32) << 16)
-            | ((rn as u32) << 5)
-            | (rd as u32);
+        let instr = 0x8B000000u32 | ((rm as u32) << 16) | ((rn as u32) << 5) | (rd as u32);
         self.emit_u32(instr);
     }
 
     /// SUB register
     fn emit_sub(&mut self, rd: u8, rn: u8, rm: u8) {
         // SUB Xd, Xn, Xm
-        let instr = 0xCB000000u32
-            | ((rm as u32) << 16)
-            | ((rn as u32) << 5)
-            | (rd as u32);
+        let instr = 0xCB000000u32 | ((rm as u32) << 16) | ((rn as u32) << 5) | (rd as u32);
         self.emit_u32(instr);
     }
 
@@ -104,10 +96,7 @@ impl Arm64Generator {
         // LDR Xt, [Xn, #offset]
         // imm12 = offset >> 3 (8-byte units)
         let imm12 = (offset as u32) >> 3;
-        let instr = 0xF9400000u32
-            | ((imm12 & 0xFFF) << 10)
-            | ((rn as u32) << 5)
-            | (rt as u32);
+        let instr = 0xF9400000u32 | ((imm12 & 0xFFF) << 10) | ((rn as u32) << 5) | (rt as u32);
         self.emit_u32(instr);
     }
 
@@ -115,10 +104,7 @@ impl Arm64Generator {
     fn emit_str(&mut self, rt: u8, rn: u8, offset: u16) {
         // STR Xt, [Xn, #offset]
         let imm12 = (offset as u32) >> 3;
-        let instr = 0xF9000000u32
-            | ((imm12 & 0xFFF) << 10)
-            | ((rn as u32) << 5)
-            | (rt as u32);
+        let instr = 0xF9000000u32 | ((imm12 & 0xFFF) << 10) | ((rn as u32) << 5) | (rt as u32);
         self.emit_u32(instr);
     }
 
@@ -130,7 +116,11 @@ impl Arm64Generator {
     }
 
     /// Compile a small code region
-    pub fn compile_region(&mut self, _addr: u64, _ctx: &GuestContext) -> Result<CompiledCode, JitError> {
+    pub fn compile_region(
+        &mut self,
+        _addr: u64,
+        _ctx: &GuestContext,
+    ) -> Result<CompiledCode, JitError> {
         // Generate a minimal prologue
         // In production, this would analyze the bytecode and generate corresponding ARM64
 

@@ -6,9 +6,9 @@
 //! - Memory access patterns
 //! - Cache efficiency
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use std::time::Instant;
 
 /// Performance profile data for compiled code
@@ -66,14 +66,17 @@ impl Profiler {
     /// Record a function call
     pub fn record_call(&self, addr: u64) {
         let mut counts = self.call_counts.lock().unwrap();
-        counts.entry(addr)
+        counts
+            .entry(addr)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
             .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the call count for an address
     pub fn get_call_count(&self, addr: u64) -> u64 {
-        self.call_counts.lock().unwrap()
+        self.call_counts
+            .lock()
+            .unwrap()
             .get(&addr)
             .map(|entry| entry.load(Ordering::Relaxed))
             .unwrap_or(0)
@@ -82,7 +85,8 @@ impl Profiler {
     /// Record execution time
     pub fn record_time(&self, addr: u64, nanos: u64) {
         let mut times = self.execution_times.lock().unwrap();
-        times.entry(addr)
+        times
+            .entry(addr)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
             .fetch_add(nanos, Ordering::Relaxed);
     }
@@ -94,7 +98,9 @@ impl Profiler {
             return 0;
         }
 
-        self.execution_times.lock().unwrap()
+        self.execution_times
+            .lock()
+            .unwrap()
             .get(&addr)
             .map(|entry| {
                 let total = entry.load(Ordering::Relaxed);
@@ -121,7 +127,9 @@ impl Profiler {
     /// Get statistics for all profiled functions
     pub fn get_stats(&self) -> Vec<(u64, u64, u64)> {
         // Returns (address, call_count, avg_time_ns)
-        self.call_counts.lock().unwrap()
+        self.call_counts
+            .lock()
+            .unwrap()
             .iter()
             .map(|(addr, count)| {
                 let cnt = count.load(Ordering::Relaxed);

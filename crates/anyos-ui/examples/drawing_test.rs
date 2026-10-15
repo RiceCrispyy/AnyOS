@@ -8,7 +8,9 @@
 //! - Pixel setting
 
 use anyos_ui::{
-    UIBackend, graphics::{Color, Rect}, window::WindowParams,
+    graphics::{Color, Rect},
+    window::WindowParams,
+    UIBackend,
 };
 
 #[cfg(target_os = "macos")]
@@ -60,11 +62,7 @@ fn main() -> anyos_ui::UIResult<()> {
     println!("4. Diagonal line (top-right to bottom-left)");
 
     // Draw a filled rectangle in the center
-    backend.fill_rect(
-        dc,
-        Rect::new(300, 200, 500, 400),
-        Color::new(100, 150, 200),
-    )?;
+    backend.fill_rect(dc, Rect::new(300, 200, 500, 400), Color::new(100, 150, 200))?;
     println!("5. Filled blue rectangle in center");
 
     // Draw text
