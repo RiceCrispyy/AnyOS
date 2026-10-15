@@ -20,6 +20,40 @@ use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 
+/// Drawing operation for recording drawing commands
+#[derive(Debug, Clone)]
+enum DrawingOp {
+    TextOut {
+        x: i32,
+        y: i32,
+        text: String,
+        color: Color,
+    },
+    Line {
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        color: Color,
+        width: i32,
+    },
+    Rectangle {
+        rect: Rect,
+        filled: bool,
+        color: Color,
+        width: i32,
+    },
+    FillRect {
+        rect: Rect,
+        color: Color,
+    },
+    SetPixel {
+        x: i32,
+        y: i32,
+        color: Color,
+    },
+}
+
 /// Drawing state for a device context
 #[derive(Debug, Clone)]
 struct DrawingState {
@@ -28,6 +62,7 @@ struct DrawingState {
     pen_color: Color,
     pen_width: i32,
     brush_color: Color,
+    operations: Vec<DrawingOp>,
 }
 
 impl Default for DrawingState {
@@ -38,6 +73,7 @@ impl Default for DrawingState {
             pen_color: Color::BLACK,
             pen_width: 1,
             brush_color: Color::WHITE,
+            operations: Vec::new(),
         }
     }
 }
@@ -426,61 +462,82 @@ impl UIBackend for MacOSBackend {
         state.current_x = x;
         state.current_y = y;
 
-        // Note: Full CoreText rendering would require more setup with NSView/CALayer
-        // For now, we prepare the text rendering infrastructure
-        // In a real implementation, you would:
-        // 1. Get the window's NSGraphicsContext
-        // 2. Create a CTLine with CTFramesetter
-        // 3. Draw using CTLineDraw
+        // Record the text operation for deferred rendering
+        state.operations.push(DrawingOp::TextOut {
+            x,
+            y,
+            text: text.to_string(),
+            color,
+        });
 
-        // This is a placeholder that accumulates the text operation
-        // Actual rendering happens during NSView's drawRect: callback
         eprintln!("text_out at ({}, {}): '{}' color={:?}", x, y, text, color);
-
         Ok(())
     }
 
     fn line_to(&mut self, dc: u64, x1: i32, y1: i32, x2: i32, y2: i32) -> UIResult<()> {
         let state = self.get_drawing_state_mut(dc)?;
+        let pen_color = state.pen_color;
+        let pen_width = state.pen_width;
 
         // Update current position
         state.current_x = x2;
         state.current_y = y2;
 
-        // Note: Drawing happens asynchronously when the window needs to redraw
-        // This method queues the drawing operation
-        eprintln!("line_to from ({}, {}) to ({}, {}) color={:?}",
-                  x1, y1, x2, y2, state.pen_color);
+        // Record the line operation
+        state.operations.push(DrawingOp::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            color: pen_color,
+            width: pen_width,
+        });
 
+        eprintln!("line_to from ({}, {}) to ({}, {}) color={:?} width={}",
+                  x1, y1, x2, y2, pen_color, pen_width);
         Ok(())
     }
 
     fn rectangle(&mut self, dc: u64, rect: Rect, filled: bool) -> UIResult<()> {
         let state = self.get_drawing_state_mut(dc)?;
+        let color = if filled {
+            state.brush_color
+        } else {
+            state.pen_color
+        };
+        let width = state.pen_width;
 
-        // Note: In a full implementation, this would record the drawing operation
-        // for later rendering during the window's drawRect: callback
-        eprintln!("rectangle at ({}, {}, {}, {}) filled={} color={:?}",
-                  rect.left, rect.top, rect.right, rect.bottom, filled,
-                  if filled { state.brush_color } else { state.pen_color });
+        // Record the rectangle operation
+        state.operations.push(DrawingOp::Rectangle {
+            rect,
+            filled,
+            color,
+            width,
+        });
 
+        eprintln!("rectangle at ({}, {}, {}, {}) filled={} color={:?} width={}",
+                  rect.left, rect.top, rect.right, rect.bottom, filled, color, width);
         Ok(())
     }
 
     fn fill_rect(&mut self, dc: u64, rect: Rect, color: Color) -> UIResult<()> {
-        let _state = self.get_drawing_state_mut(dc)?;
+        let state = self.get_drawing_state_mut(dc)?;
+
+        // Record the fill rect operation
+        state.operations.push(DrawingOp::FillRect { rect, color });
 
         eprintln!("fill_rect at ({}, {}, {}, {}) color={:?}",
                   rect.left, rect.top, rect.right, rect.bottom, color);
-
         Ok(())
     }
 
     fn set_pixel(&mut self, dc: u64, x: i32, y: i32, color: Color) -> UIResult<()> {
         let state = self.get_drawing_state_mut(dc)?;
 
-        eprintln!("set_pixel at ({}, {}) color={:?}", x, y, color);
+        // Record the pixel operation
+        state.operations.push(DrawingOp::SetPixel { x, y, color });
 
+        eprintln!("set_pixel at ({}, {}) color={:?}", x, y, color);
         Ok(())
     }
 
@@ -683,6 +740,101 @@ impl UIBackend for MacOSBackend {
             Ok(())
         } else {
             Err(UIError::InvalidHandle(format!("0x{:x}", handle.0)))
+        }
+    }
+
+    /// Render queued drawing operations using CoreGraphics
+    /// This is typically called from NSView's drawRect: callback
+    #[allow(dead_code)]
+    fn render_drawing_operations(
+        &self,
+        dc: u64,
+        _context: *mut CGContext,
+    ) -> UIResult<()> {
+        if let Some(state) = self.drawing_states.get(&dc) {
+            for op in &state.operations {
+                match op {
+                    DrawingOp::Line {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        color,
+                        width,
+                    } => {
+                        // In a real implementation:
+                        // CGContextSetLineWidth(context, *width as CGFloat);
+                        // CGContextSetStrokeColor(context, color_cgcolor.components());
+                        // CGContextMoveToPoint(context, *x1 as CGFloat, *y1 as CGFloat);
+                        // CGContextAddLineToPoint(context, *x2 as CGFloat, *y2 as CGFloat);
+                        // CGContextStrokePath(context);
+                        eprintln!(
+                            "Rendering line from ({}, {}) to ({}, {}) color={:?} width={}",
+                            x1, y1, x2, y2, color, width
+                        );
+                    }
+                    DrawingOp::Rectangle {
+                        rect,
+                        filled,
+                        color,
+                        width: _width,
+                    } => {
+                        // In a real implementation:
+                        // let cgrect = CGRectMake(
+                        //     rect.left as CGFloat, rect.top as CGFloat,
+                        //     rect.width() as CGFloat, rect.height() as CGFloat
+                        // );
+                        // CGContextSetStrokeColor/CGContextSetFillColor based on color
+                        // if *filled {
+                        //     CGContextFillRect(context, cgrect);
+                        // } else {
+                        //     CGContextStrokeRect(context, cgrect);
+                        // }
+                        eprintln!(
+                            "Rendering rectangle at ({}, {}, {}, {}) filled={} color={:?}",
+                            rect.left, rect.top, rect.right, rect.bottom, filled, color
+                        );
+                    }
+                    DrawingOp::FillRect { rect, color } => {
+                        // In a real implementation:
+                        // let cgrect = CGRectMake(...);
+                        // CGContextSetFillColor(context, color_cgcolor.components());
+                        // CGContextFillRect(context, cgrect);
+                        eprintln!(
+                            "Rendering fill_rect at ({}, {}, {}, {}) color={:?}",
+                            rect.left, rect.top, rect.right, rect.bottom, color
+                        );
+                    }
+                    DrawingOp::TextOut { x, y, text, color } => {
+                        // In a real implementation with CoreText:
+                        // let font_name = CFString::new("Helvetica");
+                        // let font = CGFont::from_name(&font_name)?;
+                        // let ct_font = CTFont::new(&font, 12.0, nullptr);
+                        // let attr_string = CFAttributedString::new(...);
+                        // let line = CTLine::new(&attr_string);
+                        // CGContextSetTextPosition(context, *x as CGFloat, *y as CGFloat);
+                        // CTLineDraw(line, context);
+                        eprintln!(
+                            "Rendering text at ({}, {}): '{}' color={:?}",
+                            x, y, text, color
+                        );
+                    }
+                    DrawingOp::SetPixel { x, y, color } => {
+                        // In a real implementation:
+                        // CGContextFillRect(context, CGRectMake(*x as CGFloat, *y as CGFloat, 1.0, 1.0));
+                        eprintln!("Rendering set_pixel at ({}, {}) color={:?}", x, y, color);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear drawing operations for a device context
+    #[allow(dead_code)]
+    fn clear_drawing_operations(&mut self, dc: u64) {
+        if let Some(state) = self.drawing_states.get_mut(&dc) {
+            state.operations.clear();
         }
     }
 }
