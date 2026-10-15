@@ -54,7 +54,7 @@ pub(crate) enum Object {
     Null,
     /// A fiber (cooperative coroutine).
     Fiber {
-        ctx: X86Context,
+        ctx: Box<X86Context>,
         stack_base: u64,
         data: u64,
     },

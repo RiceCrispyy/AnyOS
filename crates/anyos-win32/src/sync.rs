@@ -819,12 +819,16 @@ fn create_iocp(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
         // Associating a file handle with an existing IOCP: just return it.
         return Ok(existing_h);
     }
-    Ok(t.k.insert(Object::Iocp { queue: std::collections::VecDeque::new() }, None))
+    Ok(t.k.insert(
+        Object::Iocp {
+            queue: std::collections::VecDeque::new(),
+        },
+        None,
+    ))
 }
 
 fn get_queued_completion_status(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let (h, bytes_ptr, key_ptr, ov_ptr, timeout_ms) =
-        (a[0], a[1], a[2], a[3], a[4] as u32);
+    let (h, bytes_ptr, key_ptr, ov_ptr, timeout_ms) = (a[0], a[1], a[2], a[3], a[4] as u32);
     loop {
         let entry = match t.k.get(h) {
             Some(Object::Iocp { queue }) => queue.pop_front(),
@@ -1146,8 +1150,16 @@ pub(crate) static APIS: &[Api] = &[
     }),
     k32("CreateIoCompletionPort", 4, create_iocp),
     k32("GetQueuedCompletionStatus", 5, get_queued_completion_status),
-    k32("GetQueuedCompletionStatusEx", 6, get_queued_completion_status_ex),
-    k32("PostQueuedCompletionStatus", 4, post_queued_completion_status),
+    k32(
+        "GetQueuedCompletionStatusEx",
+        6,
+        get_queued_completion_status_ex,
+    ),
+    k32(
+        "PostQueuedCompletionStatus",
+        4,
+        post_queued_completion_status,
+    ),
     k32("RegisterWaitForSingleObject", 6, |t, a| {
         // No background wait threads; return failure so callers fall back.
         store_ptr(t, a[0], invalid_handle(t));

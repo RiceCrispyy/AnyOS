@@ -40,7 +40,7 @@ pub(crate) enum Halt {
     /// The API call has to wait: run other threads, then call it again.
     Block,
     /// Replace the entire CPU context (used by SwitchToFiber).
-    SwitchContext(X86Context),
+    SwitchContext(Box<X86Context>),
     Error(RunError),
     /// The API has already set `ctx` to the desired execution state (e.g.
     /// after a successful SEH `ExceptionContinueExecution`). The dispatcher
@@ -919,7 +919,7 @@ impl<'a, 'b> Thread<'a, 'b> {
             );
         }
         if let Err(Halt::SwitchContext(ctx)) = result {
-            self.ctx = ctx;
+            self.ctx = *ctx;
             return Ok(());
         }
         let value = result?;

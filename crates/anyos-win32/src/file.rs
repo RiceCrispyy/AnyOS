@@ -2338,7 +2338,12 @@ fn connect_named_pipe(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 
 fn disconnect_named_pipe(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     match t.k.get(a[0]) {
-        Some(Object::NamedPipeServer { connected, c2s, s2c, .. }) => {
+        Some(Object::NamedPipeServer {
+            connected,
+            c2s,
+            s2c,
+            ..
+        }) => {
             *connected = false;
             c2s.borrow_mut().data.clear();
             s2c.borrow_mut().data.clear();
@@ -2694,8 +2699,8 @@ pub(crate) static APIS: &[Api] = &[
     k32("PeekNamedPipe", 6, peek_named_pipe),
     k32("CreateNamedPipeA", 8, |t, a| create_named_pipe(t, a, false)),
     k32("CreateNamedPipeW", 8, |t, a| create_named_pipe(t, a, true)),
-    k32("ConnectNamedPipe", 2, |t, a| connect_named_pipe(t, a)),
-    k32("DisconnectNamedPipe", 1, |t, a| disconnect_named_pipe(t, a)),
+    k32("ConnectNamedPipe", 2, connect_named_pipe),
+    k32("DisconnectNamedPipe", 1, disconnect_named_pipe),
     k32("WaitNamedPipeA", 2, |t, a| wait_named_pipe(t, a, false)),
     k32("WaitNamedPipeW", 2, |t, a| wait_named_pipe(t, a, true)),
     k32("GetNamedPipeInfo", 5, get_named_pipe_info),
@@ -2707,10 +2712,18 @@ pub(crate) static APIS: &[Api] = &[
     k32("CallNamedPipeW", 7, |_, _| Ok(0)),
     k32("CreateHardLinkA", 3, |t, a| create_hard_link(t, a, false)),
     k32("CreateHardLinkW", 3, |t, a| create_hard_link(t, a, true)),
-    k32("CreateSymbolicLinkA", 3, |t, a| create_symbolic_link(t, a, false)),
-    k32("CreateSymbolicLinkW", 3, |t, a| create_symbolic_link(t, a, true)),
-    k32("FindFirstChangeNotificationA", 3, |t, _| Ok(invalid_handle(t))),
-    k32("FindFirstChangeNotificationW", 3, |t, _| Ok(invalid_handle(t))),
+    k32("CreateSymbolicLinkA", 3, |t, a| {
+        create_symbolic_link(t, a, false)
+    }),
+    k32("CreateSymbolicLinkW", 3, |t, a| {
+        create_symbolic_link(t, a, true)
+    }),
+    k32("FindFirstChangeNotificationA", 3, |t, _| {
+        Ok(invalid_handle(t))
+    }),
+    k32("FindFirstChangeNotificationW", 3, |t, _| {
+        Ok(invalid_handle(t))
+    }),
     k32("FindNextChangeNotification", 1, |_, _| Ok(0)),
     k32("FindCloseChangeNotification", 1, |_, _| Ok(1)),
     k32("ReadDirectoryChangesW", 8, |_, _| Ok(0)),

@@ -438,8 +438,8 @@ fn create_fiber_impl(
     proc: u64,
     param: u64,
 ) -> Result<u64, Halt> {
-    use anyos_memory::{round_up, Protection, ALLOCATION_GRANULARITY};
     use crate::objects::Object;
+    use anyos_memory::{round_up, Protection, ALLOCATION_GRANULARITY};
     let size = round_up(
         stack_size.clamp(0x4_0000, 0x100_0000),
         ALLOCATION_GRANULARITY,
@@ -453,7 +453,7 @@ fn create_fiber_impl(
     let ctx = t.push_frame(false, top, proc, &[param])?;
     Ok(t.k.insert(
         Object::Fiber {
-            ctx,
+            ctx: Box::new(ctx),
             stack_base: stack,
             data: param,
         },
@@ -479,7 +479,7 @@ fn convert_thread_to_fiber(t: &mut Thread<'_, '_>, data: u64) -> Result<u64, Hal
     let ctx = t.ctx.clone();
     let h = t.k.insert(
         Object::Fiber {
-            ctx,
+            ctx: Box::new(ctx),
             stack_base: 0,
             data,
         },
@@ -496,7 +496,7 @@ fn switch_to_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
         return Ok(0);
     }
     let new_ctx = match t.k.get(target_h) {
-        Some(Object::Fiber { ctx, .. }) => ctx.clone(),
+        Some(Object::Fiber { ctx, .. }) => *ctx.clone(),
         _ => return fail(t, ERROR_INVALID_HANDLE, 0),
     };
     // Save current context back to the current fiber object (if any).
@@ -504,11 +504,11 @@ fn switch_to_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     if t.k.current_fiber != 0 {
         let cur_h = t.k.current_fiber;
         if let Some(Object::Fiber { ctx, .. }) = t.k.get(cur_h) {
-            *ctx = cur_ctx;
+            **ctx = cur_ctx;
         }
     }
     t.k.current_fiber = target_h;
-    Err(Halt::SwitchContext(new_ctx))
+    Err(Halt::SwitchContext(Box::new(new_ctx)))
 }
 
 fn delete_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
@@ -969,13 +969,21 @@ pub(crate) static APIS: &[Api] = &[
     k32("FlsGetValue2", 1, fls_get),
     k32("FlsSetValue", 2, fls_set),
     k32("FlsFree", 1, fls_free),
-    k32("IsThreadAFiber", 0, |t, _| Ok((t.k.current_fiber != 0) as u64)),
+    k32("IsThreadAFiber", 0, |t, _| {
+        Ok((t.k.current_fiber != 0) as u64)
+    }),
     k32("CreateFiber", 3, create_fiber),
-    k32("CreateFiberEx", 5, |t, a| create_fiber(t, &[a[0], a[3], a[4]])),
+    k32("CreateFiberEx", 5, |t, a| {
+        create_fiber(t, &[a[0], a[3], a[4]])
+    }),
     k32("DeleteFiber", 1, delete_fiber),
     k32("SwitchToFiber", 1, switch_to_fiber),
-    k32("ConvertThreadToFiber", 1, |t, a| convert_thread_to_fiber(t, a[0])),
-    k32("ConvertThreadToFiberEx", 2, |t, a| convert_thread_to_fiber(t, a[0])),
+    k32("ConvertThreadToFiber", 1, |t, a| {
+        convert_thread_to_fiber(t, a[0])
+    }),
+    k32("ConvertThreadToFiberEx", 2, |t, a| {
+        convert_thread_to_fiber(t, a[0])
+    }),
     k32("ConvertFiberToThread", 0, |t, _| {
         t.k.current_fiber = 0;
         Ok(1)

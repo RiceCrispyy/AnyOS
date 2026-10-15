@@ -259,7 +259,11 @@ fn screen_buffer_info_ex(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt>
         return fail(t, ERROR_INVALID_HANDLE, 0);
     }
     // CONSOLE_SCREEN_BUFFER_INFOEX: cbSize(4) + CONSOLE_SCREEN_BUFFER_INFO(22) + wPopupAttributes(2) + bFullscreenSupported(4) + ColorTable(64)
-    let size_field = if a[1] != 0 { read_u32(t, a[1]).unwrap_or(0) } else { 0 };
+    let size_field = if a[1] != 0 {
+        read_u32(t, a[1]).unwrap_or(0)
+    } else {
+        0
+    };
     let total = 96usize;
     if size_field as usize > 0 && (size_field as usize) < total {
         return fail(t, ERROR_INVALID_PARAMETER, 0);
