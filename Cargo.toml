@@ -9,6 +9,7 @@ members = [
     "crates/anyos-elf",
     "crates/anyos-linux",
     "crates/anyos-exec",
+    "crates/anyos-exec-core",
     "crates/anyos-package",
     "crates/anyos-env",
     "crates/anyos-install",
@@ -39,6 +40,7 @@ anyos-format = { path = "crates/anyos-format" }
 anyos-elf = { path = "crates/anyos-elf" }
 anyos-linux = { path = "crates/anyos-linux" }
 anyos-exec = { path = "crates/anyos-exec" }
+anyos-exec-core = { path = "crates/anyos-exec-core" }
 anyos-package = { path = "crates/anyos-package" }
 anyos-env = { path = "crates/anyos-env" }
 anyos-install = { path = "crates/anyos-install" }
