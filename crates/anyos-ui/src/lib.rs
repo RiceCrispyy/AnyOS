@@ -6,6 +6,7 @@
 pub mod platform;
 pub mod window;
 pub mod graphics;
+pub mod graphics_optimization;
 
 pub use window::{
     Window, WindowParams, WindowHandle, Message, MessageType,
@@ -43,6 +44,7 @@ pub type UIResult<T> = Result<T, UIError>;
 /// - Window creation and destruction
 /// - Drawing contexts and graphics operations
 /// - Dialog box creation (Phase 3)
+/// - 3D graphics device creation (Phase 4)
 /// - Event loop handling
 /// - Platform-specific optimizations
 pub trait UIBackend: Send + Sync {
@@ -130,6 +132,24 @@ pub trait UIBackend: Send + Sync {
     /// End a modal dialog with a result code (Phase 3)
     fn end_dialog(&mut self, handle: WindowHandle, result: i32) -> UIResult<()> {
         let _ = (handle, result);
+        Err(UIError::NotSupported)
+    }
+
+    /// Create a 3D graphics device for a window (Phase 4)
+    fn create_graphics_device(&mut self, hwnd: WindowHandle) -> UIResult<u64> {
+        let _ = hwnd;
+        Err(UIError::NotSupported)
+    }
+
+    /// Destroy a graphics device (Phase 4)
+    fn destroy_graphics_device(&mut self, device: u64) -> UIResult<()> {
+        let _ = device;
+        Err(UIError::NotSupported)
+    }
+
+    /// Present the graphics device (render frame) (Phase 4)
+    fn present_graphics_device(&mut self, device: u64) -> UIResult<()> {
+        let _ = device;
         Err(UIError::NotSupported)
     }
 }

@@ -1,0 +1,22 @@
+[package]
+name = "anyos-dx9"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+libc = "0.2"
+glam = "0.27"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+objc-foundation = "0.1"
+cocoa = "0.25"
+core-graphics = "0.23"
+core-foundation = "0.9"
+metal = "0.29"
+
+[features]
+default = []

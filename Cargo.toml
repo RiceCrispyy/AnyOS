@@ -14,8 +14,10 @@ members = [
     "crates/anyos-install",
     "crates/anyos-backend",
     "crates/anyos-interp",
+    "crates/anyos-jit",
     "crates/anyos-win32",
     "crates/anyos-ui",
+    "crates/anyos-dx9",
     "crates/anyos-update",
     "apps/anyos-cli",
     "apps/anyos-gui",
@@ -42,8 +44,10 @@ anyos-env = { path = "crates/anyos-env" }
 anyos-install = { path = "crates/anyos-install" }
 anyos-backend = { path = "crates/anyos-backend" }
 anyos-interp = { path = "crates/anyos-interp" }
+anyos-jit = { path = "crates/anyos-jit" }
 anyos-win32 = { path = "crates/anyos-win32" }
 anyos-ui = { path = "crates/anyos-ui" }
+anyos-dx9 = { path = "crates/anyos-dx9" }
 anyos-update = { path = "crates/anyos-update" }
 goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64", "elf32", "elf64"] }
 libc = "0.2"
@@ -68,6 +72,10 @@ rfd = "0.17"
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
 sha2 = "0.10"
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
+# Performance optimization
+parking_lot = "0.12"
+dashmap = "5.5"
+rayon = "1.8"
 
 [profile.release]
 lto = "thin"
