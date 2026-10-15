@@ -18,9 +18,10 @@ pub mod threading;
 
 use anyos_backend::{ExecutionBackend, GuestArch, GuestContext, GuestFault, StopReason};
 use anyos_memory::AddressSpace;
-use dashmap::DashMap;
-use parking_lot::RwLock;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
+use std::sync::Mutex;
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Errors that can occur during JIT compilation
@@ -65,7 +66,7 @@ pub struct JitBackend {
     interpreter: anyos_interp::Interpreter,
 
     /// Compiled code cache: guest_addr -> CompiledCode
-    code_cache: Arc<DashMap<u64, Arc<CompiledCode>>>,
+    code_cache: Arc<Mutex<HashMap<u64, Arc<CompiledCode>>>>,
 
     /// Function call profiler
     profiler: Arc<profiler::Profiler>,
@@ -74,30 +75,21 @@ pub struct JitBackend {
     hotspot_detector: Arc<hotspot::HotspotDetector>,
 
     /// Total size of code cache
-    code_cache_size: Arc<RwLock<usize>>,
+    code_cache_size: Arc<Mutex<usize>>,
 
     /// Current code buffer (executable memory)
-    code_buffer: Arc<RwLock<Vec<u8>>>,
-
-    /// Thread pool for JIT compilation tasks
-    thread_pool: Arc<rayon::ThreadPool>,
+    code_buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 impl JitBackend {
     pub fn new() -> Self {
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(2)
-            .build()
-            .expect("failed to create JIT thread pool");
-
         Self {
             interpreter: anyos_interp::Interpreter::new(),
-            code_cache: Arc::new(DashMap::new()),
+            code_cache: Arc::new(Mutex::new(HashMap::new())),
             profiler: Arc::new(profiler::Profiler::new()),
             hotspot_detector: Arc::new(hotspot::HotspotDetector::new()),
-            code_cache_size: Arc::new(RwLock::new(0)),
-            code_buffer: Arc::new(RwLock::new(Vec::with_capacity(64 * 1024))),
-            thread_pool: Arc::new(thread_pool),
+            code_cache_size: Arc::new(Mutex::new(0)),
+            code_buffer: Arc::new(Mutex::new(Vec::with_capacity(64 * 1024))),
         }
     }
 
@@ -112,10 +104,10 @@ impl JitBackend {
         let compiled = code_gen.compile_region(addr, ctx)?;
 
         let compiled = Arc::new(compiled);
-        self.code_cache.insert(addr, compiled.clone());
+        self.code_cache.lock().unwrap().insert(addr, compiled.clone());
 
         // Update cache size
-        let mut cache_size = self.code_cache_size.write();
+        let mut cache_size = self.code_cache_size.lock().unwrap();
         *cache_size += compiled.size as usize;
 
         // Evict oldest entries if cache is full
@@ -129,12 +121,13 @@ impl JitBackend {
     /// Evict least-recently-used compiled code to make room
     fn evict_code_cache(&self) {
         // Find least recently executed code and remove it
-        if let Some((addr, _)) = self.code_cache
+        if let Some((addr, _)) = self.code_cache.lock().unwrap()
             .iter()
-            .min_by_key(|entry| entry.value().execution_count) {
-            let addr = *addr;
-            if let Some((_, code)) = self.code_cache.remove(&addr) {
-                let mut cache_size = self.code_cache_size.write();
+            .min_by_key(|(_addr, code)| code.execution_count)
+            .map(|(k, v)| (*k, v.clone())) {
+
+            if let Some(code) = self.code_cache.lock().unwrap().remove(&addr) {
+                let mut cache_size = self.code_cache_size.lock().unwrap();
                 *cache_size = cache_size.saturating_sub(code.size as usize);
             }
         }
@@ -142,7 +135,7 @@ impl JitBackend {
 
     /// Check if a function is hot and schedule compilation if needed
     fn check_hotspot(&self, addr: u64, call_count: u64) {
-        if call_count > HOTSPOT_THRESHOLD && !self.code_cache.contains_key(&addr) {
+        if call_count > HOTSPOT_THRESHOLD && !self.code_cache.lock().unwrap().contains_key(&addr) {
             // Mark for compilation (would be async in production)
             self.hotspot_detector.mark_hotspot(addr);
         }
@@ -176,11 +169,12 @@ impl ExecutionBackend for JitBackend {
         self.check_hotspot(ctx.pc(), call_count);
 
         // Check if we have compiled code for this address
-        if let Some(compiled) = self.code_cache.get(&ctx.pc()) {
-            // Use compiled code if available
-            drop(compiled);
-            // In a real implementation, we'd jump to the compiled code here
-            // For now, fall through to interpreter
+        if let Ok(cache) = self.code_cache.lock() {
+            if cache.contains_key(&ctx.pc()) {
+                // Use compiled code if available
+                // In a real implementation, we'd jump to the compiled code here
+                // For now, fall through to interpreter
+            }
         }
 
         // Fall back to interpreter for execution

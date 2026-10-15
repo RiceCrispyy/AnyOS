@@ -3,9 +3,9 @@
 //! Identifies frequently-called functions and marks them for JIT compilation.
 //! Uses profile-guided optimization to improve compilation efficiency.
 
-use dashmap::DashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 /// A detected hotspot (frequently-executed code region)
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ pub struct Hotspot {
 /// Detects and tracks hotspots in executed code
 pub struct HotspotDetector {
     /// Known hotspots: address -> Hotspot
-    hotspots: DashMap<u64, Hotspot>,
+    hotspots: Arc<Mutex<HashMap<u64, Hotspot>>>,
 
     /// Hotspot threshold (calls before marking as hot)
     threshold: u64,
@@ -38,7 +38,7 @@ pub struct HotspotDetector {
 impl HotspotDetector {
     pub fn new() -> Self {
         Self {
-            hotspots: DashMap::new(),
+            hotspots: Arc::new(Mutex::new(HashMap::new())),
             threshold: crate::HOTSPOT_THRESHOLD,
             total_detected: Arc::new(AtomicU64::new(0)),
         }
@@ -46,57 +46,57 @@ impl HotspotDetector {
 
     /// Mark an address as a potential hotspot
     pub fn mark_hotspot(&self, addr: u64) {
-        if !self.hotspots.contains_key(&addr) {
+        let mut hotspots = self.hotspots.lock().unwrap();
+        if !hotspots.contains_key(&addr) {
             let hotspot = Hotspot {
                 addr,
                 visit_count: 1,
                 compiling: Arc::new(AtomicBool::new(false)),
                 compiled: Arc::new(AtomicBool::new(false)),
             };
-            self.hotspots.insert(addr, hotspot);
+            hotspots.insert(addr, hotspot);
             self.total_detected.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// Increment visit count for a hotspot
     pub fn visit_hotspot(&self, addr: u64) {
-        if let Some(mut hotspot) = self.hotspots.get_mut(&addr) {
+        if let Some(hotspot) = self.hotspots.lock().unwrap().get_mut(&addr) {
             hotspot.visit_count += 1;
         }
     }
 
     /// Get all detected hotspots
     pub fn get_hotspots(&self) -> Vec<Hotspot> {
-        self.hotspots
+        self.hotspots.lock().unwrap()
             .iter()
-            .map(|entry| entry.value().clone())
+            .map(|(_, hs)| hs.clone())
             .collect()
     }
 
     /// Get hotspots ready for compilation (high visit count, not yet compiled)
     pub fn get_ready_for_compilation(&self) -> Vec<Hotspot> {
-        self.hotspots
+        self.hotspots.lock().unwrap()
             .iter()
-            .filter(|entry| {
-                let hotspot = entry.value();
+            .filter(|(_, hotspot)| {
                 hotspot.visit_count > self.threshold
                     && !hotspot.compiled.load(Ordering::Relaxed)
                     && !hotspot.compiling.load(Ordering::Relaxed)
             })
-            .map(|entry| entry.value().clone())
+            .map(|(_, hs)| hs.clone())
             .collect()
     }
 
     /// Mark a hotspot as being compiled
     pub fn mark_compiling(&self, addr: u64) {
-        if let Some(hotspot) = self.hotspots.get(&addr) {
+        if let Some(hotspot) = self.hotspots.lock().unwrap().get(&addr) {
             hotspot.compiling.store(true, Ordering::Relaxed);
         }
     }
 
     /// Mark a hotspot as compiled
     pub fn mark_compiled(&self, addr: u64) {
-        if let Some(hotspot) = self.hotspots.get(&addr) {
+        if let Some(hotspot) = self.hotspots.lock().unwrap().get(&addr) {
             hotspot.compiled.store(true, Ordering::Relaxed);
             hotspot.compiling.store(false, Ordering::Relaxed);
         }
@@ -104,12 +104,12 @@ impl HotspotDetector {
 
     /// Get the number of detected hotspots
     pub fn count(&self) -> usize {
-        self.hotspots.len()
+        self.hotspots.lock().unwrap().len()
     }
 
     /// Clear all hotspot data
     pub fn reset(&self) {
-        self.hotspots.clear();
+        self.hotspots.lock().unwrap().clear();
         self.total_detected.store(0, Ordering::Relaxed);
     }
 }
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn test_ready_for_compilation() {
         let detector = HotspotDetector {
-            hotspots: DashMap::new(),
+            hotspots: Arc::new(Mutex::new(HashMap::new())),
             threshold: 5,
             total_detected: Arc::new(AtomicU64::new(0)),
         };
@@ -149,7 +149,7 @@ mod tests {
             compiled: Arc::new(AtomicBool::new(false)),
         };
 
-        detector.hotspots.insert(0x1000, hotspot);
+        detector.hotspots.lock().unwrap().insert(0x1000, hotspot);
 
         let ready = detector.get_ready_for_compilation();
         assert_eq!(ready.len(), 1);

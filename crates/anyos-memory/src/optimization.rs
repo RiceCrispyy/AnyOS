@@ -6,8 +6,7 @@
 //! - Cache-friendly data layout
 //! - Heap optimization
 
-use std::sync::Arc;
-use parking_lot::Mutex;
+use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 
 /// Object pool for reducing allocations
@@ -204,6 +203,7 @@ impl Default for CacheLine {
 /// Heap allocator with pooling
 pub struct PooledAllocator<T> {
     pools: Vec<ObjectPool<T>>,
+    pool_index: Arc<Mutex<usize>>,
 }
 
 impl<T: Clone> PooledAllocator<T> {
@@ -217,7 +217,10 @@ impl<T: Clone> PooledAllocator<T> {
             .map(|_| ObjectPool::new(|| factory_arc().clone(), pool_size))
             .collect();
 
-        Self { pools }
+        Self {
+            pools,
+            pool_index: Arc::new(Mutex::new(0)),
+        }
     }
 
     /// Get an object from the best pool
@@ -227,15 +230,18 @@ impl<T: Clone> PooledAllocator<T> {
             panic!("No pools available");
         }
 
-        let idx = rand::random::<usize>() % self.pools.len();
-        self.pools[idx].acquire()
+        let mut idx = self.pool_index.lock().unwrap();
+        let result = self.pools[*idx].acquire();
+        *idx = (*idx + 1) % self.pools.len();
+        result
     }
 
     /// Return an object to a pool
     pub fn release(&self, obj: T) {
         if !self.pools.is_empty() {
-            let idx = rand::random::<usize>() % self.pools.len();
-            self.pools[idx].release(obj);
+            let mut idx = self.pool_index.lock().unwrap();
+            self.pools[*idx].release(obj);
+            *idx = (*idx + 1) % self.pools.len();
         }
     }
 }

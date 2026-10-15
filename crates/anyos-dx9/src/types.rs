@@ -1,7 +1,5 @@
 //! Common types and structures for D3D9
 
-use glam::{Mat4, Vec3, Vec4};
-
 /// 4x4 transformation matrix
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -21,14 +19,29 @@ impl D3DMATRIX {
         }
     }
 
-    pub fn from_glam(mat: Mat4) -> Self {
-        Self {
-            m: mat.to_cols_array_2d(),
+    /// Multiply two matrices: result = self * other
+    pub fn multiply(&self, other: &D3DMATRIX) -> Self {
+        let mut result = D3DMATRIX::identity();
+        for i in 0..4 {
+            for j in 0..4 {
+                result.m[i][j] = 0.0;
+                for k in 0..4 {
+                    result.m[i][j] += self.m[i][k] * other.m[k][j];
+                }
+            }
         }
+        result
     }
 
-    pub fn to_glam(self) -> Mat4 {
-        Mat4::from_cols_array_2d(&self.m)
+    /// Transpose the matrix
+    pub fn transpose(&self) -> Self {
+        let mut result = Self::identity();
+        for i in 0..4 {
+            for j in 0..4 {
+                result.m[i][j] = self.m[j][i];
+            }
+        }
+        result
     }
 }
 
@@ -50,12 +63,33 @@ impl D3DVECTOR {
         Self { x: 0.0, y: 0.0, z: 0.0 }
     }
 
-    pub fn from_glam(v: Vec3) -> Self {
-        Self { x: v.x, y: v.y, z: v.z }
+    pub fn dot(&self, other: &D3DVECTOR) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    pub fn to_glam(self) -> Vec3 {
-        Vec3::new(self.x, self.y, self.z)
+    pub fn cross(&self, other: &D3DVECTOR) -> D3DVECTOR {
+        D3DVECTOR {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
+    }
+
+    pub fn length(&self) -> f32 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    pub fn normalize(&self) -> D3DVECTOR {
+        let len = self.length();
+        if len > 0.0 {
+            D3DVECTOR {
+                x: self.x / len,
+                y: self.y / len,
+                z: self.z / len,
+            }
+        } else {
+            *self
+        }
     }
 }
 

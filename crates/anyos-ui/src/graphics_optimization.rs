@@ -8,8 +8,7 @@
 //! - GPU upload scheduling
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use parking_lot::RwLock;
+use std::sync::{Arc, Mutex};
 
 /// Cached render state to minimize GPU state changes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,10 +46,10 @@ pub struct TextureAtlas {
     pub data: Vec<u8>,
 
     /// Texture entries: region_id -> (x, y, w, h)
-    pub regions: Arc<RwLock<HashMap<u32, (u32, u32, u32, u32)>>>,
+    pub regions: Arc<Mutex<HashMap<u32, (u32, u32, u32, u32)>>>,
 
     /// Next available offset
-    pub next_offset: Arc<RwLock<u32>>,
+    pub next_offset: Arc<Mutex<u32>>,
 }
 
 impl TextureAtlas {
@@ -60,14 +59,14 @@ impl TextureAtlas {
         Self {
             size,
             data: vec![0; byte_size],
-            regions: Arc::new(RwLock::new(HashMap::new())),
-            next_offset: Arc::new(RwLock::new(0)),
+            regions: Arc::new(Mutex::new(HashMap::new())),
+            next_offset: Arc::new(Mutex::new(0)),
         }
     }
 
     /// Add a texture region to the atlas
     pub fn add_region(&self, region_id: u32, texture_data: &[u8], width: u32, height: u32) -> Option<(u32, u32)> {
-        let mut offset = self.next_offset.write();
+        let mut offset = self.next_offset.lock().unwrap();
         let byte_size = (width * height * 4) as usize;
 
         // Simple row-packing layout
@@ -83,7 +82,7 @@ impl TextureAtlas {
         if start + byte_size <= self.data.len() {
             self.data[start..start + byte_size].copy_from_slice(texture_data);
 
-            let mut regions = self.regions.write();
+            let mut regions = self.regions.lock().unwrap();
             regions.insert(region_id, (x, y, width, height));
 
             *offset += (width * height);
@@ -95,24 +94,24 @@ impl TextureAtlas {
 
     /// Get the position of a region in the atlas
     pub fn get_region(&self, region_id: u32) -> Option<(u32, u32, u32, u32)> {
-        self.regions.read().get(&region_id).copied()
+        self.regions.lock().unwrap().get(&region_id).copied()
     }
 }
 
 /// Shader cache for compiled Metal shaders
 pub struct ShaderCache {
     /// Cached shaders: source_hash -> compiled_data
-    shaders: Arc<RwLock<HashMap<u64, Vec<u8>>>>,
+    shaders: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
 
     /// Shader source hashes
-    hashes: Arc<RwLock<HashMap<String, u64>>>,
+    hashes: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl ShaderCache {
     pub fn new() -> Self {
         Self {
-            shaders: Arc::new(RwLock::new(HashMap::new())),
-            hashes: Arc::new(RwLock::new(HashMap::new())),
+            shaders: Arc::new(Mutex::new(HashMap::new())),
+            hashes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -123,7 +122,7 @@ impl ShaderCache {
 
         // Check cache
         {
-            let shaders = self.shaders.read();
+            let shaders = self.shaders.lock().unwrap();
             if let Some(compiled) = shaders.get(&hash) {
                 return Ok(compiled.clone());
             }
@@ -134,7 +133,7 @@ impl ShaderCache {
 
         // Cache result
         {
-            let mut shaders = self.shaders.write();
+            let mut shaders = self.shaders.lock().unwrap();
             shaders.insert(hash, compiled.clone());
         }
 
@@ -158,8 +157,8 @@ impl ShaderCache {
 
     /// Clear the cache
     pub fn clear(&self) {
-        self.shaders.write().clear();
-        self.hashes.write().clear();
+        self.shaders.lock().unwrap().clear();
+        self.hashes.lock().unwrap().clear();
     }
 }
 
@@ -172,13 +171,13 @@ impl Default for ShaderCache {
 /// Command buffer optimizer for Metal rendering
 pub struct CommandBufferOptimizer {
     /// Cached render state
-    current_state: Arc<RwLock<RenderState>>,
+    current_state: Arc<Mutex<RenderState>>,
 
     /// Command batches pending upload
-    pending_batches: Arc<RwLock<Vec<RenderBatch>>>,
+    pending_batches: Arc<Mutex<Vec<RenderBatch>>>,
 
     /// State change count (for statistics)
-    state_changes: Arc<RwLock<u64>>,
+    state_changes: Arc<Mutex<u64>>,
 }
 
 /// A batch of render commands
@@ -203,42 +202,42 @@ pub struct RenderBatch {
 impl CommandBufferOptimizer {
     pub fn new() -> Self {
         Self {
-            current_state: Arc::new(RwLock::new(RenderState::default())),
-            pending_batches: Arc::new(RwLock::new(Vec::new())),
-            state_changes: Arc::new(RwLock::new(0)),
+            current_state: Arc::new(Mutex::new(RenderState::default())),
+            pending_batches: Arc::new(Mutex::new(Vec::new())),
+            state_changes: Arc::new(Mutex::new(0)),
         }
     }
 
     /// Add a render batch, optimizing state changes
     pub fn add_batch(&self, batch: RenderBatch) {
-        let mut current = self.current_state.write();
+        let mut current = self.current_state.lock().unwrap();
 
         if batch.state != *current {
-            *self.state_changes.write() += 1;
+            *self.state_changes.lock().unwrap() += 1;
             *current = batch.state;
         }
 
-        self.pending_batches.write().push(batch);
+        self.pending_batches.lock().unwrap().push(batch);
     }
 
     /// Get all pending batches
     pub fn get_batches(&self) -> Vec<RenderBatch> {
-        self.pending_batches.read().clone()
+        self.pending_batches.lock().unwrap().clone()
     }
 
     /// Clear pending batches
     pub fn clear(&self) {
-        self.pending_batches.write().clear();
+        self.pending_batches.lock().unwrap().clear();
     }
 
     /// Get state change statistics
     pub fn get_state_changes(&self) -> u64 {
-        *self.state_changes.read()
+        *self.state_changes.lock().unwrap()
     }
 
     /// Reset statistics
     pub fn reset_stats(&self) {
-        *self.state_changes.write() = 0;
+        *self.state_changes.lock().unwrap() = 0;
     }
 }
 
@@ -254,20 +253,20 @@ pub struct GpuMemoryManager {
     max_memory: u64,
 
     /// Currently allocated memory
-    current_memory: Arc<RwLock<u64>>,
+    current_memory: Arc<Mutex<u64>>,
 }
 
 impl GpuMemoryManager {
     pub fn new(max_memory: u64) -> Self {
         Self {
             max_memory,
-            current_memory: Arc::new(RwLock::new(0)),
+            current_memory: Arc::new(Mutex::new(0)),
         }
     }
 
     /// Allocate GPU memory
     pub fn allocate(&self, size: u64) -> Result<u64, String> {
-        let mut current = self.current_memory.write();
+        let mut current = self.current_memory.lock().unwrap();
 
         if *current + size > self.max_memory {
             return Err(format!(
@@ -283,13 +282,13 @@ impl GpuMemoryManager {
 
     /// Free GPU memory
     pub fn free(&self, size: u64) {
-        let mut current = self.current_memory.write();
+        let mut current = self.current_memory.lock().unwrap();
         *current = current.saturating_sub(size);
     }
 
     /// Get current memory usage
     pub fn current_usage(&self) -> u64 {
-        *self.current_memory.read()
+        *self.current_memory.lock().unwrap()
     }
 
     /// Get available memory

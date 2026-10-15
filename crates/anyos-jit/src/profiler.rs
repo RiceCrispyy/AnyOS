@@ -6,9 +6,9 @@
 //! - Memory access patterns
 //! - Cache efficiency
 
-use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// Performance profile data for compiled code
@@ -41,10 +41,10 @@ struct FunctionProfile {
 /// Global profiler for function call tracking
 pub struct Profiler {
     /// Function call counts: address -> count
-    call_counts: DashMap<u64, Arc<AtomicU64>>,
+    call_counts: Arc<Mutex<HashMap<u64, Arc<AtomicU64>>>>,
 
     /// Function execution times: address -> nanoseconds
-    execution_times: DashMap<u64, Arc<AtomicU64>>,
+    execution_times: Arc<Mutex<HashMap<u64, Arc<AtomicU64>>>>,
 
     /// Total instructions executed
     total_instructions: Arc<AtomicU64>,
@@ -56,8 +56,8 @@ pub struct Profiler {
 impl Profiler {
     pub fn new() -> Self {
         Self {
-            call_counts: DashMap::new(),
-            execution_times: DashMap::new(),
+            call_counts: Arc::new(Mutex::new(HashMap::new())),
+            execution_times: Arc::new(Mutex::new(HashMap::new())),
             total_instructions: Arc::new(AtomicU64::new(0)),
             total_compile_time: Arc::new(AtomicU64::new(0)),
         }
@@ -65,15 +65,15 @@ impl Profiler {
 
     /// Record a function call
     pub fn record_call(&self, addr: u64) {
-        self.call_counts
-            .entry(addr)
+        let mut counts = self.call_counts.lock().unwrap();
+        counts.entry(addr)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
             .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get the call count for an address
     pub fn get_call_count(&self, addr: u64) -> u64 {
-        self.call_counts
+        self.call_counts.lock().unwrap()
             .get(&addr)
             .map(|entry| entry.load(Ordering::Relaxed))
             .unwrap_or(0)
@@ -81,8 +81,8 @@ impl Profiler {
 
     /// Record execution time
     pub fn record_time(&self, addr: u64, nanos: u64) {
-        self.execution_times
-            .entry(addr)
+        let mut times = self.execution_times.lock().unwrap();
+        times.entry(addr)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)))
             .fetch_add(nanos, Ordering::Relaxed);
     }
@@ -94,7 +94,7 @@ impl Profiler {
             return 0;
         }
 
-        self.execution_times
+        self.execution_times.lock().unwrap()
             .get(&addr)
             .map(|entry| {
                 let total = entry.load(Ordering::Relaxed);
@@ -121,21 +121,20 @@ impl Profiler {
     /// Get statistics for all profiled functions
     pub fn get_stats(&self) -> Vec<(u64, u64, u64)> {
         // Returns (address, call_count, avg_time_ns)
-        self.call_counts
+        self.call_counts.lock().unwrap()
             .iter()
-            .map(|entry| {
-                let addr = *entry.key();
-                let count = entry.value().load(Ordering::Relaxed);
-                let avg_time = self.get_avg_time(addr);
-                (addr, count, avg_time)
+            .map(|(addr, count)| {
+                let cnt = count.load(Ordering::Relaxed);
+                let avg_time = self.get_avg_time(*addr);
+                (*addr, cnt, avg_time)
             })
             .collect()
     }
 
     /// Reset all profiling data
     pub fn reset(&self) {
-        self.call_counts.clear();
-        self.execution_times.clear();
+        self.call_counts.lock().unwrap().clear();
+        self.execution_times.lock().unwrap().clear();
         self.total_instructions.store(0, Ordering::Relaxed);
         self.total_compile_time.store(0, Ordering::Relaxed);
     }
