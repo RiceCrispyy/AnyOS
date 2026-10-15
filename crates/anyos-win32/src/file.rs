@@ -75,15 +75,15 @@ pub(crate) struct View {
 
 #[derive(Default)]
 pub(crate) struct PipeBuf {
-    data: VecDeque<u8>,
-    readers: u32,
-    writers: u32,
+    pub(crate) data: VecDeque<u8>,
+    pub(crate) readers: u32,
+    pub(crate) writers: u32,
 }
 
 /// One end of an anonymous pipe.
 pub(crate) struct PipeEnd {
-    buf: Rc<RefCell<PipeBuf>>,
-    write: bool,
+    pub(crate) buf: Rc<RefCell<PipeBuf>>,
+    pub(crate) write: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +342,32 @@ pub(crate) fn create_file(
             dev
         });
     }
+    // Named pipe client: \\.\pipe\<name>
+    let pipe_name = name
+        .strip_prefix(r"\\.\pipe\")
+        .or_else(|| name.strip_prefix(r"\\.\Pipe\"))
+        .or_else(|| name.strip_prefix(r"//./pipe/"));
+    if let Some(pipe_name) = pipe_name {
+        let key = pipe_name.to_ascii_lowercase();
+        let server_h = t.k.named_pipes.get(&key).copied();
+        let Some(server_h) = server_h else {
+            return Err(ERROR_FILE_NOT_FOUND);
+        };
+        let (c2s, s2c) = match t.k.get(server_h) {
+            Some(Object::NamedPipeServer { c2s, s2c, .. }) => (c2s.clone(), s2c.clone()),
+            _ => return Err(ERROR_FILE_NOT_FOUND),
+        };
+        c2s.borrow_mut().writers += 1;
+        c2s.borrow_mut().readers += 1;
+        s2c.borrow_mut().writers += 1;
+        s2c.borrow_mut().readers += 1;
+        if let Some(Object::NamedPipeServer { connected, .. }) = t.k.get(server_h) {
+            *connected = true;
+        }
+        t.wake_all();
+        let h = t.k.insert(Object::NamedPipeClient { c2s, s2c }, None);
+        return Ok(h);
+    }
     let full = full_path(t, name);
     let host = host_path(t, &full).ok_or(ERROR_PATH_NOT_FOUND)?;
     let read = access & (GENERIC_READ | GENERIC_ALL | GENERIC_EXECUTE | FILE_READ_DATA) != 0;
@@ -526,6 +552,44 @@ fn read_file(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
             n
         }
         Some(Object::Null) => 0,
+        Some(Object::NamedPipeServer { c2s, .. }) => {
+            let c2s = c2s.clone();
+            let mut b = c2s.borrow_mut();
+            if b.data.is_empty() {
+                if b.writers == 0 {
+                    drop(b);
+                    return fail(t, ERROR_BROKEN_PIPE, 0);
+                }
+                drop(b);
+                loop {
+                    t.wait_or_block(None, false)?;
+                }
+            }
+            let n = b.data.len().min(data.len());
+            for (d, s) in data.iter_mut().zip(b.data.drain(..n)) {
+                *d = s;
+            }
+            n
+        }
+        Some(Object::NamedPipeClient { s2c, .. }) => {
+            let s2c = s2c.clone();
+            let mut b = s2c.borrow_mut();
+            if b.data.is_empty() {
+                if b.writers == 0 {
+                    drop(b);
+                    return fail(t, ERROR_BROKEN_PIPE, 0);
+                }
+                drop(b);
+                loop {
+                    t.wait_or_block(None, false)?;
+                }
+            }
+            let n = b.data.len().min(data.len());
+            for (d, s) in data.iter_mut().zip(b.data.drain(..n)) {
+                *d = s;
+            }
+            n
+        }
         _ => return fail(t, ERROR_INVALID_HANDLE, 0),
     };
     if !write_bytes(t, buf, &data[..n]) {
@@ -576,6 +640,26 @@ fn write_file(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
             }
         }
         Some(Object::Null) => Ok(()),
+        Some(Object::NamedPipeServer { s2c, .. }) => {
+            let s2c = s2c.clone();
+            let mut b = s2c.borrow_mut();
+            if b.readers == 0 {
+                Err(ERROR_NO_DATA)
+            } else {
+                b.data.extend(&data);
+                Ok(())
+            }
+        }
+        Some(Object::NamedPipeClient { c2s, .. }) => {
+            let c2s = c2s.clone();
+            let mut b = c2s.borrow_mut();
+            if b.readers == 0 {
+                Err(ERROR_NO_DATA)
+            } else {
+                b.data.extend(&data);
+                Ok(())
+            }
+        }
         _ => Err(ERROR_INVALID_HANDLE),
     };
     match r {
@@ -705,7 +789,9 @@ fn get_file_type(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     }
     match t.k.get(a[0]) {
         Some(Object::File(_)) => Ok(FILE_TYPE_DISK),
-        Some(Object::Pipe(_)) => Ok(FILE_TYPE_PIPE),
+        Some(Object::Pipe(_))
+        | Some(Object::NamedPipeServer { .. })
+        | Some(Object::NamedPipeClient { .. }) => Ok(FILE_TYPE_PIPE),
         Some(Object::Null) => Ok(FILE_TYPE_CHAR),
         _ => fail(t, ERROR_INVALID_HANDLE, 0),
     }
@@ -873,6 +959,22 @@ pub(crate) fn finalize(t: &mut Thread<'_, '_>, obj: Object) {
                 b.readers -= 1;
             }
             drop(b);
+            t.wake_all();
+        }
+        Object::NamedPipeServer { name, c2s, s2c, .. } => {
+            let key = name.to_ascii_lowercase();
+            t.k.named_pipes.remove(&key);
+            c2s.borrow_mut().readers = c2s.borrow().readers.saturating_sub(1);
+            c2s.borrow_mut().writers = c2s.borrow().writers.saturating_sub(1);
+            s2c.borrow_mut().readers = s2c.borrow().readers.saturating_sub(1);
+            s2c.borrow_mut().writers = s2c.borrow().writers.saturating_sub(1);
+            t.wake_all();
+        }
+        Object::NamedPipeClient { c2s, s2c } => {
+            c2s.borrow_mut().readers = c2s.borrow().readers.saturating_sub(1);
+            c2s.borrow_mut().writers = c2s.borrow().writers.saturating_sub(1);
+            s2c.borrow_mut().readers = s2c.borrow().readers.saturating_sub(1);
+            s2c.borrow_mut().writers = s2c.borrow().writers.saturating_sub(1);
             t.wake_all();
         }
         _ => {}
@@ -2179,6 +2281,175 @@ fn write_private_profile_section(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Named pipes
+
+fn create_named_pipe(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let invalid = invalid_handle(t);
+    let Some(name) = (a[0] != 0).then(|| read_str(t, a[0], wide)).flatten() else {
+        return fail(t, ERROR_INVALID_PARAMETER, invalid);
+    };
+    let pipe_name = name
+        .strip_prefix(r"\\.\pipe\")
+        .or_else(|| name.strip_prefix(r"\\.\Pipe\"))
+        .or_else(|| name.strip_prefix(r"//./pipe/"))
+        .unwrap_or(&name);
+    let key = pipe_name.to_ascii_lowercase();
+    if t.k.named_pipes.contains_key(&key) {
+        return fail(t, ERROR_ALREADY_EXISTS, invalid);
+    }
+    let c2s = Rc::new(RefCell::new(PipeBuf {
+        data: std::collections::VecDeque::new(),
+        readers: 1,
+        writers: 1,
+    }));
+    let s2c = Rc::new(RefCell::new(PipeBuf {
+        data: std::collections::VecDeque::new(),
+        readers: 1,
+        writers: 1,
+    }));
+    let h = t.k.insert(
+        Object::NamedPipeServer {
+            name: key.clone(),
+            c2s,
+            s2c,
+            connected: false,
+        },
+        None,
+    );
+    t.k.named_pipes.insert(key, h);
+    t.set_last_error(ERROR_SUCCESS);
+    Ok(h)
+}
+
+fn connect_named_pipe(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    match t.k.get(a[0]) {
+        Some(Object::NamedPipeServer { connected, .. }) => {
+            if *connected {
+                return Ok(1);
+            }
+        }
+        _ => return fail(t, ERROR_INVALID_HANDLE, 0),
+    }
+    loop {
+        t.wait_or_block(None, false)?;
+    }
+}
+
+fn disconnect_named_pipe(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    match t.k.get(a[0]) {
+        Some(Object::NamedPipeServer {
+            connected,
+            c2s,
+            s2c,
+            ..
+        }) => {
+            *connected = false;
+            c2s.borrow_mut().data.clear();
+            s2c.borrow_mut().data.clear();
+            Ok(1)
+        }
+        _ => fail(t, ERROR_INVALID_HANDLE, 0),
+    }
+}
+
+fn wait_named_pipe(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let Some(name) = (a[0] != 0).then(|| read_str(t, a[0], wide)).flatten() else {
+        return fail(t, ERROR_INVALID_PARAMETER, 0);
+    };
+    let pipe_name = name
+        .strip_prefix(r"\\.\pipe\")
+        .or_else(|| name.strip_prefix(r"\\.\Pipe\"))
+        .or_else(|| name.strip_prefix(r"//./pipe/"))
+        .unwrap_or(&name);
+    let key = pipe_name.to_ascii_lowercase();
+    if t.k.named_pipes.contains_key(&key) {
+        Ok(1)
+    } else {
+        fail(t, ERROR_FILE_NOT_FOUND, 0)
+    }
+}
+
+fn get_named_pipe_info(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    match t.k.get(a[0]) {
+        Some(Object::NamedPipeServer { .. }) | Some(Object::NamedPipeClient { .. }) => {
+            store_u32(t, a[1], 1); // PIPE_SERVER_END or PIPE_CLIENT_END
+            store_u32(t, a[2], 4096);
+            store_u32(t, a[3], 4096);
+            store_u32(t, a[4], 1);
+            Ok(1)
+        }
+        Some(Object::Pipe(_)) => {
+            store_u32(t, a[1], 0);
+            store_u32(t, a[2], 4096);
+            store_u32(t, a[3], 4096);
+            store_u32(t, a[4], 1);
+            Ok(1)
+        }
+        _ => fail(t, ERROR_INVALID_HANDLE, 0),
+    }
+}
+
+fn get_named_pipe_handle_state(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    match t.k.get(a[0]) {
+        Some(Object::NamedPipeServer { .. })
+        | Some(Object::NamedPipeClient { .. })
+        | Some(Object::Pipe(_)) => {
+            store_u32(t, a[1], 0); // PIPE_READMODE_BYTE | PIPE_WAIT
+            store_u32(t, a[2], 1);
+            store_u32(t, a[3], 0);
+            Ok(1)
+        }
+        _ => fail(t, ERROR_INVALID_HANDLE, 0),
+    }
+}
+
+fn create_hard_link(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let (link_name, existing_name) = (a[0], a[1]);
+    let (_, existing_host) = match arg_path(t, existing_name, wide) {
+        Ok(p) => p,
+        Err(e) => return fail(t, e, 0),
+    };
+    let (_, link_host) = match arg_path(t, link_name, wide) {
+        Ok(p) => p,
+        Err(e) => return fail(t, e, 0),
+    };
+    match std::fs::hard_link(&existing_host, &link_host) {
+        Ok(()) => Ok(1),
+        Err(e) => {
+            let code = io_error(&e, &link_host);
+            fail(t, code, 0)
+        }
+    }
+}
+
+fn create_symbolic_link(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let (link_name, target_name) = (a[0], a[1]);
+    let (_, link_host) = match arg_path(t, link_name, wide) {
+        Ok(p) => p,
+        Err(e) => return fail(t, e, 0),
+    };
+    let (_, target_host) = match arg_path(t, target_name, wide) {
+        Ok(p) => p,
+        Err(e) => return fail(t, e, 0),
+    };
+    #[cfg(unix)]
+    {
+        match std::os::unix::fs::symlink(&target_host, &link_host) {
+            Ok(()) => Ok(1),
+            Err(e) => {
+                let code = io_error(&e, &link_host);
+                fail(t, code, 0)
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (link_host, target_host);
+        fail(t, ERROR_NOT_SUPPORTED, 0)
+    }
+}
+
 fn get_final_path_name(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let Some(f) = file_of(t, a[0]) else {
         return fail(t, ERROR_INVALID_HANDLE, 0);
@@ -2426,6 +2697,36 @@ pub(crate) static APIS: &[Api] = &[
     k32("FlushViewOfFile", 2, flush_view_api),
     k32("CreatePipe", 4, create_pipe),
     k32("PeekNamedPipe", 6, peek_named_pipe),
+    k32("CreateNamedPipeA", 8, |t, a| create_named_pipe(t, a, false)),
+    k32("CreateNamedPipeW", 8, |t, a| create_named_pipe(t, a, true)),
+    k32("ConnectNamedPipe", 2, connect_named_pipe),
+    k32("DisconnectNamedPipe", 1, disconnect_named_pipe),
+    k32("WaitNamedPipeA", 2, |t, a| wait_named_pipe(t, a, false)),
+    k32("WaitNamedPipeW", 2, |t, a| wait_named_pipe(t, a, true)),
+    k32("GetNamedPipeInfo", 5, get_named_pipe_info),
+    k32("GetNamedPipeHandleStateA", 7, get_named_pipe_handle_state),
+    k32("GetNamedPipeHandleStateW", 7, get_named_pipe_handle_state),
+    k32("SetNamedPipeHandleState", 4, |_, _| Ok(1)),
+    k32("TransactNamedPipe", 7, |_, _| Ok(0)),
+    k32("CallNamedPipeA", 7, |_, _| Ok(0)),
+    k32("CallNamedPipeW", 7, |_, _| Ok(0)),
+    k32("CreateHardLinkA", 3, |t, a| create_hard_link(t, a, false)),
+    k32("CreateHardLinkW", 3, |t, a| create_hard_link(t, a, true)),
+    k32("CreateSymbolicLinkA", 3, |t, a| {
+        create_symbolic_link(t, a, false)
+    }),
+    k32("CreateSymbolicLinkW", 3, |t, a| {
+        create_symbolic_link(t, a, true)
+    }),
+    k32("FindFirstChangeNotificationA", 3, |t, _| {
+        Ok(invalid_handle(t))
+    }),
+    k32("FindFirstChangeNotificationW", 3, |t, _| {
+        Ok(invalid_handle(t))
+    }),
+    k32("FindNextChangeNotification", 1, |_, _| Ok(0)),
+    k32("FindCloseChangeNotification", 1, |_, _| Ok(1)),
+    k32("ReadDirectoryChangesW", 8, |_, _| Ok(0)),
     k32("GetPrivateProfileStringA", 6, |t, a| {
         get_private_profile_string(t, a, false, None)
     }),

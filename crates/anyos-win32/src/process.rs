@@ -430,6 +430,118 @@ pub(crate) fn run_fls_callbacks(t: &mut Thread<'_, '_>) -> Result<(), Halt> {
 }
 
 // ---------------------------------------------------------------------------
+// Fibers
+
+fn create_fiber_impl(
+    t: &mut Thread<'_, '_>,
+    stack_size: u64,
+    proc: u64,
+    param: u64,
+) -> Result<u64, Halt> {
+    use crate::objects::Object;
+    use anyos_memory::{round_up, Protection, ALLOCATION_GRANULARITY};
+    let size = round_up(
+        stack_size.clamp(0x4_0000, 0x100_0000),
+        ALLOCATION_GRANULARITY,
+    );
+    let stack = t
+        .process
+        .memory
+        .map_anywhere(size, Protection::RW, "fiber stack", None)
+        .map_err(crate::thread::Halt::from)?;
+    let top = stack + size - 0x100;
+    let ctx = t.push_frame(false, top, proc, &[param])?;
+    Ok(t.k.insert(
+        Object::Fiber {
+            ctx: Box::new(ctx),
+            stack_base: stack,
+            data: param,
+        },
+        None,
+    ))
+}
+
+fn create_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (size, proc, param) = (a[0], a[1], a[2]);
+    let h = create_fiber_impl(t, size, proc, param)?;
+    if h == 0 {
+        fail(t, ERROR_NOT_ENOUGH_MEMORY, 0)
+    } else {
+        Ok(h)
+    }
+}
+
+fn convert_thread_to_fiber(t: &mut Thread<'_, '_>, data: u64) -> Result<u64, Halt> {
+    use crate::objects::Object;
+    if t.k.current_fiber != 0 {
+        return Ok(t.k.current_fiber);
+    }
+    let ctx = t.ctx.clone();
+    let h = t.k.insert(
+        Object::Fiber {
+            ctx: Box::new(ctx),
+            stack_base: 0,
+            data,
+        },
+        None,
+    );
+    t.k.current_fiber = h;
+    Ok(h)
+}
+
+fn switch_to_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    use crate::objects::Object;
+    let target_h = a[0];
+    if target_h == t.k.current_fiber {
+        return Ok(0);
+    }
+    let new_ctx = match t.k.get(target_h) {
+        Some(Object::Fiber { ctx, .. }) => *ctx.clone(),
+        _ => return fail(t, ERROR_INVALID_HANDLE, 0),
+    };
+    // Save current context back to the current fiber object (if any).
+    let cur_ctx = t.ctx.clone();
+    if t.k.current_fiber != 0 {
+        let cur_h = t.k.current_fiber;
+        if let Some(Object::Fiber { ctx, .. }) = t.k.get(cur_h) {
+            **ctx = cur_ctx;
+        }
+    }
+    t.k.current_fiber = target_h;
+    Err(Halt::SwitchContext(Box::new(new_ctx)))
+}
+
+fn delete_fiber(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    use crate::objects::Object;
+    let h = a[0];
+    if h == t.k.current_fiber {
+        return fail(t, ERROR_INVALID_PARAMETER, 0);
+    }
+    let stack_base = match t.k.get(h) {
+        Some(Object::Fiber { stack_base, .. }) => *stack_base,
+        _ => return fail(t, ERROR_INVALID_HANDLE, 0),
+    };
+    if stack_base != 0 {
+        let _ = t.process.memory.unmap(stack_base);
+    }
+    t.k.close(h);
+    Ok(1)
+}
+
+fn get_current_fiber(t: &mut Thread<'_, '_>, _: &[u64]) -> Result<u64, Halt> {
+    Ok(t.k.current_fiber)
+}
+
+fn get_fiber_data(t: &mut Thread<'_, '_>, _: &[u64]) -> Result<u64, Halt> {
+    use crate::objects::Object;
+    let h = t.k.current_fiber;
+    match t.k.get(h) {
+        Some(Object::Fiber { data, .. }) => Ok(*data),
+        _ => Ok(0),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Processes
 
 fn is_self(t: &mut Thread<'_, '_>, h: u64) -> bool {
@@ -857,7 +969,27 @@ pub(crate) static APIS: &[Api] = &[
     k32("FlsGetValue2", 1, fls_get),
     k32("FlsSetValue", 2, fls_set),
     k32("FlsFree", 1, fls_free),
-    k32("IsThreadAFiber", 0, |_, _| Ok(0)),
+    k32("IsThreadAFiber", 0, |t, _| {
+        Ok((t.k.current_fiber != 0) as u64)
+    }),
+    k32("CreateFiber", 3, create_fiber),
+    k32("CreateFiberEx", 5, |t, a| {
+        create_fiber(t, &[a[0], a[3], a[4]])
+    }),
+    k32("DeleteFiber", 1, delete_fiber),
+    k32("SwitchToFiber", 1, switch_to_fiber),
+    k32("ConvertThreadToFiber", 1, |t, a| {
+        convert_thread_to_fiber(t, a[0])
+    }),
+    k32("ConvertThreadToFiberEx", 2, |t, a| {
+        convert_thread_to_fiber(t, a[0])
+    }),
+    k32("ConvertFiberToThread", 0, |t, _| {
+        t.k.current_fiber = 0;
+        Ok(1)
+    }),
+    k32("GetCurrentFiber", 0, get_current_fiber),
+    k32("GetFiberData", 0, get_fiber_data),
     k32("CreateProcessA", 10, |t, a| create_process(t, a, false)),
     k32("CreateProcessW", 10, |t, a| create_process(t, a, true)),
     k32("OpenProcess", 3, open_process),

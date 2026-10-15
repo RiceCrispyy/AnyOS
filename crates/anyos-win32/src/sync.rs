@@ -52,7 +52,10 @@ fn signaled(t: &mut Thread<'_, '_>, h: u64) -> Option<(bool, bool)> {
         Object::Child(c) | Object::ChildThread(c) => (c.poll_exit().is_some(), true),
         Object::SelfProcess => (false, false),
         Object::File(_) | Object::Pipe(_) | Object::Null => (true, false),
-        Object::Find(_) | Object::Mapping(_) => return None,
+        Object::NamedPipeServer { .. } | Object::NamedPipeClient { .. } => (true, false),
+        Object::Find(_) | Object::Mapping(_) | Object::Fiber { .. } | Object::Iocp { .. } => {
+            return None
+        }
     })
 }
 
@@ -807,6 +810,133 @@ const CREATE_EVENT_INITIAL_SET: u64 = 2;
 const CREATE_MUTEX_INITIAL_OWNER: u64 = 1;
 const CREATE_WAITABLE_TIMER_MANUAL_RESET: u64 = 1;
 
+// ---------------------------------------------------------------------------
+// I/O Completion Ports
+
+fn create_iocp(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (existing_h, _conc) = (a[2], a[3]);
+    if existing_h != 0 && existing_h as u32 != 0xFFFF_FFFF {
+        // Associating a file handle with an existing IOCP: just return it.
+        return Ok(existing_h);
+    }
+    Ok(t.k.insert(
+        Object::Iocp {
+            queue: std::collections::VecDeque::new(),
+        },
+        None,
+    ))
+}
+
+fn get_queued_completion_status(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (h, bytes_ptr, key_ptr, ov_ptr, timeout_ms) = (a[0], a[1], a[2], a[3], a[4] as u32);
+    loop {
+        let entry = match t.k.get(h) {
+            Some(Object::Iocp { queue }) => queue.pop_front(),
+            _ => return fail(t, ERROR_INVALID_HANDLE, 0),
+        };
+        if let Some((key, transferred, overlapped)) = entry {
+            store_u32(t, bytes_ptr, transferred as u32);
+            store_ptr(t, key_ptr, key);
+            store_ptr(t, ov_ptr, overlapped);
+            return Ok(1);
+        }
+        if timeout_ms == 0 {
+            store_ptr(t, ov_ptr, 0);
+            return fail(t, WAIT_TIMEOUT as u32, 0);
+        }
+        let deadline = if timeout_ms == 0xFFFF_FFFF {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+        };
+        t.wait_or_block(deadline, false)?;
+    }
+}
+
+fn post_queued_completion_status(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (h, transferred, key, overlapped) = (a[0], a[1], a[2], a[3]);
+    match t.k.get(h) {
+        Some(Object::Iocp { queue }) => {
+            queue.push_back((key, transferred, overlapped));
+            t.wake_all();
+            Ok(1)
+        }
+        _ => fail(t, ERROR_INVALID_HANDLE, 0),
+    }
+}
+
+fn get_queued_completion_status_ex(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (h, entries_ptr, count, removed_ptr, timeout_ms, _alertable) =
+        (a[0], a[1], a[2] as u32, a[3], a[4] as u32, a[5]);
+    let p = t.ptr_size() as u64;
+    loop {
+        let entries: Vec<(u64, u64, u64)> = match t.k.get(h) {
+            Some(Object::Iocp { queue }) => {
+                let take = (count as usize).min(queue.len());
+                queue.drain(..take).collect()
+            }
+            _ => return fail(t, ERROR_INVALID_HANDLE, 0),
+        };
+        let n = entries.len() as u32;
+        for (i, (key, transferred, overlapped)) in entries.into_iter().enumerate() {
+            let entry_ptr = entries_ptr + i as u64 * (p * 3 + 4);
+            write_ptr(t, entry_ptr, key);
+            store_u32(t, entry_ptr + p, transferred as u32);
+            write_ptr(t, entry_ptr + p + 4, overlapped);
+        }
+        if n > 0 {
+            store_u32(t, removed_ptr, n);
+            return Ok(1);
+        }
+        if timeout_ms == 0 {
+            store_u32(t, removed_ptr, 0);
+            return fail(t, WAIT_TIMEOUT as u32, 0);
+        }
+        let deadline = if timeout_ms == 0xFFFF_FFFF {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+        };
+        t.wait_or_block(deadline, false)?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Additional wait / address primitives
+
+fn wait_on_address(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let (addr, compare_ptr, size, timeout_ms) = (a[0], a[1], a[2] as u32, a[3] as u32);
+    let deadline = if timeout_ms == 0xFFFF_FFFF {
+        None
+    } else {
+        Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+    };
+    loop {
+        let same = (0..size).all(|i| {
+            let a_byte = read_u8(t, addr + i as u64).unwrap_or(0);
+            let c_byte = read_u8(t, compare_ptr + i as u64).unwrap_or(1);
+            a_byte == c_byte
+        });
+        if !same {
+            return Ok(1);
+        }
+        match t.wait_or_block(deadline, false) {
+            Ok(_) => {}
+            Err(Halt::Block) => return Err(Halt::Block),
+            Err(e) => return Err(e),
+        }
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return fail(t, WAIT_TIMEOUT as u32, 0);
+        }
+    }
+}
+
+fn read_u8(t: &Thread<'_, '_>, addr: u64) -> Option<u8> {
+    let mut b = [0u8];
+    t.process.memory.read_raw(addr, &mut b).ok()?;
+    Some(b[0])
+}
+
 pub(crate) static APIS: &[Api] = &[
     k32("WaitForSingleObject", 2, wait_single),
     k32("WaitForSingleObjectEx", 3, wait_single),
@@ -1017,5 +1147,33 @@ pub(crate) static APIS: &[Api] = &[
     k32("RtlFirstEntrySList", 1, |t, a| {
         let (next_off, _) = slist_layout(t);
         Ok(read_ptr(t, a[0] + next_off).unwrap_or(0))
+    }),
+    k32("CreateIoCompletionPort", 4, create_iocp),
+    k32("GetQueuedCompletionStatus", 5, get_queued_completion_status),
+    k32(
+        "GetQueuedCompletionStatusEx",
+        6,
+        get_queued_completion_status_ex,
+    ),
+    k32(
+        "PostQueuedCompletionStatus",
+        4,
+        post_queued_completion_status,
+    ),
+    k32("RegisterWaitForSingleObject", 6, |t, a| {
+        // No background wait threads; return failure so callers fall back.
+        store_ptr(t, a[0], invalid_handle(t));
+        fail(t, ERROR_NOT_SUPPORTED, 0)
+    }),
+    k32("UnregisterWait", 1, |_, _| Ok(1)),
+    k32("UnregisterWaitEx", 2, |_, _| Ok(1)),
+    k32("WaitOnAddress", 4, wait_on_address),
+    k32("WakeByAddressSingle", 1, |t, _| {
+        t.wake_all();
+        Ok(0)
+    }),
+    k32("WakeByAddressAll", 1, |t, _| {
+        t.wake_all();
+        Ok(0)
     }),
 ];

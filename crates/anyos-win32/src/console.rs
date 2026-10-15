@@ -254,6 +254,52 @@ fn ok_count(t: &mut Thread<'_, '_>, out: u64, n: u32) -> Result<u64, Halt> {
     Ok(1)
 }
 
+fn screen_buffer_info_ex(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    if !console_handle(t, a[0]) || a[0] & 0xFFFF_FFFF == STDIN_HANDLE {
+        return fail(t, ERROR_INVALID_HANDLE, 0);
+    }
+    // CONSOLE_SCREEN_BUFFER_INFOEX: cbSize(4) + CONSOLE_SCREEN_BUFFER_INFO(22) + wPopupAttributes(2) + bFullscreenSupported(4) + ColorTable(64)
+    let size_field = if a[1] != 0 {
+        read_u32(t, a[1]).unwrap_or(0)
+    } else {
+        0
+    };
+    let total = 96usize;
+    if size_field as usize > 0 && (size_field as usize) < total {
+        return fail(t, ERROR_INVALID_PARAMETER, 0);
+    }
+    let mut b = vec![0u8; total];
+    b[0..4].copy_from_slice(&(total as u32).to_le_bytes());
+    // dwSize (COORD): columns, rows
+    b[4..6].copy_from_slice(&COLUMNS.to_le_bytes());
+    b[6..8].copy_from_slice(&300u16.to_le_bytes());
+    // dwCursorPosition: 0, 0 (already zero)
+    // wAttributes: 7
+    b[12..14].copy_from_slice(&7u16.to_le_bytes());
+    // srWindow
+    b[14..16].copy_from_slice(&0u16.to_le_bytes());
+    b[16..18].copy_from_slice(&0u16.to_le_bytes());
+    b[18..20].copy_from_slice(&(COLUMNS - 1).to_le_bytes());
+    b[20..22].copy_from_slice(&(ROWS - 1).to_le_bytes());
+    // dwMaximumWindowSize
+    b[22..24].copy_from_slice(&COLUMNS.to_le_bytes());
+    b[24..26].copy_from_slice(&ROWS.to_le_bytes());
+    // wPopupAttributes: 0xf5
+    b[26..28].copy_from_slice(&0xf5u16.to_le_bytes());
+    if !write_bytes(t, a[1], &b) {
+        return fail(t, ERROR_NOACCESS, 0);
+    }
+    Ok(1)
+}
+
+fn get_console_font_size(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    if !console_handle(t, a[0]) {
+        return fail(t, ERROR_INVALID_HANDLE, 0);
+    }
+    // Return COORD { X: 8, Y: 16 } as a DWORD
+    Ok(8u64 | (16u64 << 16))
+}
+
 pub(crate) static APIS: &[Api] = &[
     k32("GetStdHandle", 1, get_std_handle),
     k32("SetStdHandle", 2, set_std_handle),
@@ -327,4 +373,43 @@ pub(crate) static APIS: &[Api] = &[
         }
         Ok(1)
     }),
+    k32("GetConsoleScreenBufferInfoEx", 2, screen_buffer_info_ex),
+    k32("SetConsoleScreenBufferInfoEx", 2, |_, _| Ok(1)),
+    k32("GetCurrentConsoleFont", 3, |t, a| {
+        // CONSOLE_FONT_INFO: nFont(4) + dwFontSize.X(2) + dwFontSize.Y(2)
+        let mut b = vec![0u8; 8];
+        b[4..6].copy_from_slice(&8u16.to_le_bytes());
+        b[6..8].copy_from_slice(&16u16.to_le_bytes());
+        Ok(write_bytes(t, a[1], &b) as u64)
+    }),
+    k32("GetConsoleFontSize", 2, get_console_font_size),
+    k32("GetCurrentConsoleFontEx", 3, |t, a| {
+        // CONSOLE_FONT_INFOEX: cbSize(4) + nFont(4) + dwFontSize(4) + FontFamily(4) + FontWeight(4) + FaceName(64)
+        let mut b = vec![0u8; 84];
+        b[0..4].copy_from_slice(&84u32.to_le_bytes());
+        b[8..10].copy_from_slice(&8u16.to_le_bytes());
+        b[10..12].copy_from_slice(&16u16.to_le_bytes());
+        Ok(write_bytes(t, a[1], &b) as u64)
+    }),
+    k32("SetCurrentConsoleFontEx", 3, |_, _| Ok(1)),
+    k32("GetNumberOfConsoleMouseButtons", 1, |t, a| {
+        Ok(write_u32(t, a[0], 2) as u64)
+    }),
+    k32("GetConsoleSelectionInfo", 1, |t, a| {
+        Ok(write_bytes(t, a[0], &[0; 16]) as u64)
+    }),
+    k32("GetConsoleHistoryInfo", 1, |t, a| {
+        let mut b = vec![0u8; 12];
+        b[0..4].copy_from_slice(&12u32.to_le_bytes());
+        b[4..8].copy_from_slice(&50u32.to_le_bytes());
+        b[8..12].copy_from_slice(&4096u32.to_le_bytes());
+        Ok(write_bytes(t, a[0], &b) as u64)
+    }),
+    k32("SetConsoleHistoryInfo", 1, |_, _| Ok(1)),
+    k32("AddConsoleAliasA", 3, |_, _| Ok(1)),
+    k32("AddConsoleAliasW", 3, |_, _| Ok(1)),
+    k32("GetConsoleAliasesLengthA", 1, |_, _| Ok(0)),
+    k32("GetConsoleAliasesLengthW", 1, |_, _| Ok(0)),
+    k32("GetConsoleAliasExesLengthA", 0, |_, _| Ok(0)),
+    k32("GetConsoleAliasExesLengthW", 0, |_, _| Ok(0)),
 ];

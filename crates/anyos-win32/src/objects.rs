@@ -5,10 +5,14 @@
 //! one object (`DuplicateHandle`, opening a named object twice); the object
 //! goes away with its last handle.
 
-use std::collections::{BTreeMap, HashMap};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::rc::Rc;
 use std::time::Instant;
 
-use crate::file::{FileObj, FindObj, MappingObj, PipeEnd};
+use anyos_backend::X86Context;
+
+use crate::file::{FileObj, FindObj, MappingObj, PipeBuf, PipeEnd};
 use crate::heap::Heap;
 use crate::memory::Reservation;
 use crate::process::ChildProcess;
@@ -48,6 +52,28 @@ pub(crate) enum Object {
     Pipe(PipeEnd),
     /// `NUL`: reads nothing, swallows writes.
     Null,
+    /// A fiber (cooperative coroutine).
+    Fiber {
+        ctx: Box<X86Context>,
+        stack_base: u64,
+        data: u64,
+    },
+    /// I/O completion port.
+    Iocp {
+        queue: VecDeque<(u64, u64, u64)>,
+    },
+    /// Server end of a named pipe.
+    NamedPipeServer {
+        name: String,
+        c2s: Rc<RefCell<PipeBuf>>,
+        s2c: Rc<RefCell<PipeBuf>>,
+        connected: bool,
+    },
+    /// Client end of a named pipe.
+    NamedPipeClient {
+        c2s: Rc<RefCell<PipeBuf>>,
+        s2c: Rc<RefCell<PipeBuf>>,
+    },
 }
 
 struct Slot {
@@ -87,6 +113,10 @@ pub(crate) struct Kernel {
     pub thread_locale: u32,
     pub priority_class: u32,
     pub ui: UiState,
+    /// Handle of the fiber the current thread is running as (0 = none).
+    pub current_fiber: u64,
+    /// Named pipes registered by CreateNamedPipe: pipe name -> server handle.
+    pub named_pipes: HashMap<String, u64>,
 }
 
 /// First handle value handed out. Real Windows hands out multiples of 4; these
