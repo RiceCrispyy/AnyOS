@@ -15,6 +15,7 @@ members = [
     "crates/anyos-backend",
     "crates/anyos-interp",
     "crates/anyos-win32",
+    "crates/anyos-ui",
     "crates/anyos-update",
     "apps/anyos-cli",
     "apps/anyos-gui",
@@ -42,6 +43,7 @@ anyos-install = { path = "crates/anyos-install" }
 anyos-backend = { path = "crates/anyos-backend" }
 anyos-interp = { path = "crates/anyos-interp" }
 anyos-win32 = { path = "crates/anyos-win32" }
+anyos-ui = { path = "crates/anyos-ui" }
 anyos-update = { path = "crates/anyos-update" }
 goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64", "elf32", "elf64"] }
 libc = "0.2"
