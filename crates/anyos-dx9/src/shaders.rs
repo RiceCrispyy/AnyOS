@@ -87,7 +87,9 @@ impl VertexShaderConstants {
 
     pub fn set_constant(&mut self, index: usize, value: f32) -> D3DResult<()> {
         if index >= self.data.len() {
-            return Err(D3DError::StateError("Constant index out of range".to_string()));
+            return Err(D3DError::StateError(
+                "Constant index out of range".to_string(),
+            ));
         }
         self.data[index] = value;
         self.dirty = true;
@@ -107,7 +109,9 @@ impl VertexShaderConstants {
 
     pub fn set_matrix(&mut self, index: usize, matrix: &[[f32; 4]; 4]) -> D3DResult<()> {
         if index + 16 > self.data.len() {
-            return Err(D3DError::StateError("Matrix write exceeds buffer".to_string()));
+            return Err(D3DError::StateError(
+                "Matrix write exceeds buffer".to_string(),
+            ));
         }
         for (i, row) in matrix.iter().enumerate() {
             for (j, &val) in row.iter().enumerate() {
@@ -143,7 +147,9 @@ impl PixelShaderConstants {
 
     pub fn set_constant(&mut self, index: usize, value: f32) -> D3DResult<()> {
         if index >= self.data.len() {
-            return Err(D3DError::StateError("Constant index out of range".to_string()));
+            return Err(D3DError::StateError(
+                "Constant index out of range".to_string(),
+            ));
         }
         self.data[index] = value;
         self.dirty = true;
@@ -192,7 +198,8 @@ pub fn create_fixed_function_vs() -> String {
 
         return output;
     }
-    "#.to_string()
+    "#
+    .to_string()
 }
 
 /// Fixed function pixel shader (fallback)
@@ -214,7 +221,8 @@ pub fn create_fixed_function_ps() -> String {
         output.color = tex2D(texture0, input.texCoord) * input.color;
         return output;
     }
-    "#.to_string()
+    "#
+    .to_string()
 }
 
 #[cfg(test)]
@@ -247,7 +255,12 @@ mod tests {
     #[test]
     fn test_vs_matrix() {
         let mut consts = VertexShaderConstants::new(16);
-        let matrix = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let matrix = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
 
         consts.set_matrix(0, &matrix).unwrap();
         assert_eq!(consts.data[0], 1.0);

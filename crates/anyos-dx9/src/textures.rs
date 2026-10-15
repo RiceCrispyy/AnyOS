@@ -116,15 +116,15 @@ impl Texture {
             // Compressed formats have variable sizes
             D3DFORMAT::D3DFMT_DXT1 => 1, // 6 bits per pixel
             D3DFORMAT::D3DFMT_DXT3 | D3DFORMAT::D3DFMT_DXT5 => 1, // 8 bits per pixel
-            _ => 4, // Default to 4 for unknown formats
+            _ => 4,                      // Default to 4 for unknown formats
         }
     }
 
     /// Get a surface by level
     pub fn get_surface(&self, level: u32) -> D3DResult<&TextureSurface> {
-        self.surfaces.get(level as usize).ok_or_else(|| {
-            D3DError::InvalidHandle(format!("Mipmap level {} out of range", level))
-        })
+        self.surfaces
+            .get(level as usize)
+            .ok_or_else(|| D3DError::InvalidHandle(format!("Mipmap level {} out of range", level)))
     }
 
     /// Get a mutable surface by level
@@ -186,8 +186,7 @@ mod tests {
 
     #[test]
     fn test_texture_with_mipmaps() {
-        let desc = TextureDesc::new(256, 256, D3DFORMAT::D3DFMT_A8R8G8B8)
-            .with_levels(5);
+        let desc = TextureDesc::new(256, 256, D3DFORMAT::D3DFMT_A8R8G8B8).with_levels(5);
         let handle = TextureHandle(1);
         let tex = Texture::new(handle, desc);
 

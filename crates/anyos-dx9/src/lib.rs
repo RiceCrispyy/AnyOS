@@ -3,16 +3,16 @@
 //! Provides a subset of Direct3D 9 API that games depend on.
 //! Backends (Metal on macOS, etc.) implement actual rendering.
 
-pub mod device;
 pub mod buffers;
-pub mod textures;
+pub mod device;
 pub mod shaders;
+pub mod textures;
 pub mod types;
 
+pub use buffers::{IndexBuffer, VertexBuffer};
 pub use device::{D3DDevice, D3DDeviceHandle};
-pub use buffers::{VertexBuffer, IndexBuffer};
+pub use shaders::{PixelShader, ShaderHandle, VertexShader};
 pub use textures::{Texture, TextureHandle};
-pub use shaders::{VertexShader, PixelShader, ShaderHandle};
 pub use types::*;
 
 use thiserror::Error;

@@ -3,11 +3,18 @@
 //! Core device that manages resources, render state, and rendering operations.
 
 use crate::{
-    buffers::{IndexBuffer, IndexBufferDesc, IndexBufferHandle, VertexBuffer, VertexBufferDesc, VertexBufferHandle, IndexFormat},
-    shaders::{PixelShader, PixelShaderConstants, PixelShaderHandle, VertexShader, VertexShaderConstants, VertexShaderHandle},
+    buffers::{
+        IndexBuffer, IndexBufferDesc, IndexBufferHandle, IndexFormat, VertexBuffer,
+        VertexBufferDesc, VertexBufferHandle,
+    },
+    shaders::{
+        PixelShader, PixelShaderConstants, PixelShaderHandle, VertexShader, VertexShaderConstants,
+        VertexShaderHandle,
+    },
     textures::{Texture, TextureDesc, TextureHandle},
     types::D3DMATRIX,
-    D3DError, D3DResult, D3DBLEND, D3DCMPFUNC, D3DCULL, D3DFILLMODE, D3DPRIMITIVETYPE, D3DRENDERSTATETYPE, D3DSAMPLERSTATETYPE, D3DTEXTUREFILTERTYPE, D3DTRANSFORMSTATETYPE,
+    D3DError, D3DResult, D3DBLEND, D3DCMPFUNC, D3DCULL, D3DFILLMODE, D3DPRIMITIVETYPE,
+    D3DRENDERSTATETYPE, D3DSAMPLERSTATETYPE, D3DTEXTUREFILTERTYPE, D3DTRANSFORMSTATETYPE,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,16 +118,26 @@ impl D3DDevice {
         };
 
         // Set default matrices
-        device.transform_matrices.insert(D3DTRANSFORMSTATETYPE::D3DTS_WORLD, D3DMATRIX::identity());
-        device.transform_matrices.insert(D3DTRANSFORMSTATETYPE::D3DTS_VIEW, D3DMATRIX::identity());
-        device.transform_matrices.insert(D3DTRANSFORMSTATETYPE::D3DTS_PROJECTION, D3DMATRIX::identity());
+        device
+            .transform_matrices
+            .insert(D3DTRANSFORMSTATETYPE::D3DTS_WORLD, D3DMATRIX::identity());
+        device
+            .transform_matrices
+            .insert(D3DTRANSFORMSTATETYPE::D3DTS_VIEW, D3DMATRIX::identity());
+        device.transform_matrices.insert(
+            D3DTRANSFORMSTATETYPE::D3DTS_PROJECTION,
+            D3DMATRIX::identity(),
+        );
 
         device
     }
 
     // Vertex buffer management
 
-    pub fn create_vertex_buffer(&mut self, desc: VertexBufferDesc) -> D3DResult<VertexBufferHandle> {
+    pub fn create_vertex_buffer(
+        &mut self,
+        desc: VertexBufferDesc,
+    ) -> D3DResult<VertexBufferHandle> {
         let handle = VertexBufferHandle(self.next_vb_id);
         self.next_vb_id += 1;
 
@@ -136,7 +153,10 @@ impl D3DDevice {
             .ok_or_else(|| D3DError::InvalidHandle(format!("Vertex buffer {:?} not found", handle)))
     }
 
-    pub fn get_vertex_buffer_mut(&mut self, handle: VertexBufferHandle) -> D3DResult<&mut VertexBuffer> {
+    pub fn get_vertex_buffer_mut(
+        &mut self,
+        handle: VertexBufferHandle,
+    ) -> D3DResult<&mut VertexBuffer> {
         self.vertex_buffers
             .get_mut(&handle)
             .ok_or_else(|| D3DError::InvalidHandle(format!("Vertex buffer {:?} not found", handle)))
@@ -160,7 +180,10 @@ impl D3DDevice {
             .ok_or_else(|| D3DError::InvalidHandle(format!("Index buffer {:?} not found", handle)))
     }
 
-    pub fn get_index_buffer_mut(&mut self, handle: IndexBufferHandle) -> D3DResult<&mut IndexBuffer> {
+    pub fn get_index_buffer_mut(
+        &mut self,
+        handle: IndexBufferHandle,
+    ) -> D3DResult<&mut IndexBuffer> {
         self.index_buffers
             .get_mut(&handle)
             .ok_or_else(|| D3DError::InvalidHandle(format!("Index buffer {:?} not found", handle)))
@@ -235,30 +258,53 @@ impl D3DDevice {
         Ok(*self.render_state.render_states.get(&state).unwrap_or(&0))
     }
 
-    pub fn set_sampler_state(&mut self, sampler: u32, state: D3DSAMPLERSTATETYPE, value: u32) -> D3DResult<()> {
-        self.render_state.sampler_states.insert((sampler, state), value);
+    pub fn set_sampler_state(
+        &mut self,
+        sampler: u32,
+        state: D3DSAMPLERSTATETYPE,
+        value: u32,
+    ) -> D3DResult<()> {
+        self.render_state
+            .sampler_states
+            .insert((sampler, state), value);
         Ok(())
     }
 
     pub fn get_sampler_state(&self, sampler: u32, state: D3DSAMPLERSTATETYPE) -> D3DResult<u32> {
-        Ok(*self.render_state.sampler_states.get(&(sampler, state)).unwrap_or(&0))
+        Ok(*self
+            .render_state
+            .sampler_states
+            .get(&(sampler, state))
+            .unwrap_or(&0))
     }
 
     // Transformation matrices
 
-    pub fn set_transform(&mut self, state: D3DTRANSFORMSTATETYPE, matrix: &D3DMATRIX) -> D3DResult<()> {
+    pub fn set_transform(
+        &mut self,
+        state: D3DTRANSFORMSTATETYPE,
+        matrix: &D3DMATRIX,
+    ) -> D3DResult<()> {
         self.transform_matrices.insert(state, *matrix);
         Ok(())
     }
 
     pub fn get_transform(&self, state: D3DTRANSFORMSTATETYPE) -> D3DResult<D3DMATRIX> {
-        Ok(*self.transform_matrices.get(&state).unwrap_or(&D3DMATRIX::identity()))
+        Ok(*self
+            .transform_matrices
+            .get(&state)
+            .unwrap_or(&D3DMATRIX::identity()))
     }
 
     // Shader constants
 
-    pub fn set_vertex_shader_constant_f(&mut self, start_register: u32, constant: &[f32]) -> D3DResult<()> {
-        self.vertex_shader_constants.set_vector(start_register as usize, constant)?;
+    pub fn set_vertex_shader_constant_f(
+        &mut self,
+        start_register: u32,
+        constant: &[f32],
+    ) -> D3DResult<()> {
+        self.vertex_shader_constants
+            .set_vector(start_register as usize, constant)?;
         Ok(())
     }
 
@@ -266,8 +312,13 @@ impl D3DDevice {
         self.vertex_shader_constants.get_data()
     }
 
-    pub fn set_pixel_shader_constant_f(&mut self, start_register: u32, constant: &[f32]) -> D3DResult<()> {
-        self.pixel_shader_constants.set_vector(start_register as usize, constant)?;
+    pub fn set_pixel_shader_constant_f(
+        &mut self,
+        start_register: u32,
+        constant: &[f32],
+    ) -> D3DResult<()> {
+        self.pixel_shader_constants
+            .set_vector(start_register as usize, constant)?;
         Ok(())
     }
 
@@ -303,13 +354,21 @@ impl D3DDevice {
 
     // Stream management
 
-    pub fn set_stream_source(&mut self, stream_number: u32, buffer_handle: Option<VertexBufferHandle>, offset: u32, stride: u32) -> D3DResult<()> {
+    pub fn set_stream_source(
+        &mut self,
+        stream_number: u32,
+        buffer_handle: Option<VertexBufferHandle>,
+        offset: u32,
+        stride: u32,
+    ) -> D3DResult<()> {
         if let Some(handle) = buffer_handle {
             let buffer = self.get_vertex_buffer(handle)?;
             if stride != buffer.get_stride() && stride != 0 {
-                return Err(D3DError::StateError(
-                    format!("Stream stride {} doesn't match buffer stride {}", stride, buffer.get_stride())
-                ));
+                return Err(D3DError::StateError(format!(
+                    "Stream stride {} doesn't match buffer stride {}",
+                    stride,
+                    buffer.get_stride()
+                )));
             }
         }
 
@@ -332,7 +391,9 @@ impl D3DDevice {
 
     pub fn begin_scene(&mut self) -> D3DResult<()> {
         if self.in_scene {
-            return Err(D3DError::RenderError("Scene already in progress".to_string()));
+            return Err(D3DError::RenderError(
+                "Scene already in progress".to_string(),
+            ));
         }
         self.in_scene = true;
         Ok(())
@@ -352,7 +413,12 @@ impl D3DDevice {
 
     // Rendering
 
-    pub fn draw_primitive(&self, primitive_type: D3DPRIMITIVETYPE, start_vertex: u32, primitive_count: u32) -> D3DResult<()> {
+    pub fn draw_primitive(
+        &self,
+        primitive_type: D3DPRIMITIVETYPE,
+        start_vertex: u32,
+        primitive_count: u32,
+    ) -> D3DResult<()> {
         if !self.in_scene {
             return Err(D3DError::RenderError("BeginScene not called".to_string()));
         }
@@ -373,15 +439,25 @@ impl D3DDevice {
         };
 
         if start_vertex + vertex_count > vb.get_vertex_count() {
-            return Err(D3DError::RenderError(
-                format!("Not enough vertices: need {}, have {}", start_vertex + vertex_count, vb.get_vertex_count())
-            ));
+            return Err(D3DError::RenderError(format!(
+                "Not enough vertices: need {}, have {}",
+                start_vertex + vertex_count,
+                vb.get_vertex_count()
+            )));
         }
 
         Ok(())
     }
 
-    pub fn draw_indexed_primitive(&self, primitive_type: D3DPRIMITIVETYPE, base_vertex_index: i32, min_vertex_index: u32, num_vertices: u32, start_index: u32, primitive_count: u32) -> D3DResult<()> {
+    pub fn draw_indexed_primitive(
+        &self,
+        primitive_type: D3DPRIMITIVETYPE,
+        base_vertex_index: i32,
+        min_vertex_index: u32,
+        num_vertices: u32,
+        start_index: u32,
+        primitive_count: u32,
+    ) -> D3DResult<()> {
         if !self.in_scene {
             return Err(D3DError::RenderError("BeginScene not called".to_string()));
         }
@@ -406,9 +482,11 @@ impl D3DDevice {
 
         let ib = self.get_index_buffer(self.active_index_buffer.unwrap())?;
         if start_index + index_count > ib.get_index_count() {
-            return Err(D3DError::RenderError(
-                format!("Not enough indices: need {}, have {}", start_index + index_count, ib.get_index_count())
-            ));
+            return Err(D3DError::RenderError(format!(
+                "Not enough indices: need {}, have {}",
+                start_index + index_count,
+                ib.get_index_count()
+            )));
         }
 
         Ok(())
@@ -419,7 +497,9 @@ impl D3DDevice {
         // This would actually clear the render targets in the backend
         // For now, just validate the call
         if !self.in_scene {
-            return Err(D3DError::RenderError("Cannot clear outside scene".to_string()));
+            return Err(D3DError::RenderError(
+                "Cannot clear outside scene".to_string(),
+            ));
         }
         Ok(())
     }
@@ -427,7 +507,9 @@ impl D3DDevice {
     /// Present the frame
     pub fn present(&self) -> D3DResult<()> {
         if self.in_scene {
-            return Err(D3DError::RenderError("Cannot present while scene in progress".to_string()));
+            return Err(D3DError::RenderError(
+                "Cannot present while scene in progress".to_string(),
+            ));
         }
         Ok(())
     }
@@ -497,8 +579,15 @@ mod tests {
         let handle = D3DDeviceHandle(1);
         let mut device = D3DDevice::new(handle);
 
-        device.set_render_state(D3DRENDERSTATETYPE::D3DRS_ZENABLE, 1).unwrap();
-        assert_eq!(device.get_render_state(D3DRENDERSTATETYPE::D3DRS_ZENABLE).unwrap(), 1);
+        device
+            .set_render_state(D3DRENDERSTATETYPE::D3DRS_ZENABLE, 1)
+            .unwrap();
+        assert_eq!(
+            device
+                .get_render_state(D3DRENDERSTATETYPE::D3DRS_ZENABLE)
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -507,7 +596,11 @@ mod tests {
         let mut device = D3DDevice::new(handle);
 
         let _ = device.create_vertex_buffer(VertexBufferDesc::new(100, 32));
-        let _ = device.create_texture(TextureDesc::new(256, 256, crate::D3DFORMAT::D3DFMT_A8R8G8B8));
+        let _ = device.create_texture(TextureDesc::new(
+            256,
+            256,
+            crate::D3DFORMAT::D3DFMT_A8R8G8B8,
+        ));
 
         let stats = device.get_stats();
         assert_eq!(stats.vertex_buffers, 1);

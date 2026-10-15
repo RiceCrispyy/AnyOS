@@ -97,14 +97,18 @@ impl VertexBuffer {
     /// Write vertex data to the buffer
     pub fn write_data(&mut self, offset: u32, data: &[u8]) -> D3DResult<()> {
         if self.locked {
-            return Err(D3DError::StateError("Cannot write to locked buffer".to_string()));
+            return Err(D3DError::StateError(
+                "Cannot write to locked buffer".to_string(),
+            ));
         }
 
         let offset = offset as usize;
         let end = offset + data.len();
 
         if end > self.data.len() {
-            return Err(D3DError::BufferCreationFailed("Write exceeds buffer size".to_string()));
+            return Err(D3DError::BufferCreationFailed(
+                "Write exceeds buffer size".to_string(),
+            ));
         }
 
         self.data[offset..end].copy_from_slice(data);
@@ -174,14 +178,18 @@ impl IndexBuffer {
     /// Write index data to the buffer
     pub fn write_data(&mut self, offset: u32, data: &[u8]) -> D3DResult<()> {
         if self.locked {
-            return Err(D3DError::StateError("Cannot write to locked buffer".to_string()));
+            return Err(D3DError::StateError(
+                "Cannot write to locked buffer".to_string(),
+            ));
         }
 
         let offset = offset as usize;
         let end = offset + data.len();
 
         if end > self.data.len() {
-            return Err(D3DError::BufferCreationFailed("Write exceeds buffer size".to_string()));
+            return Err(D3DError::BufferCreationFailed(
+                "Write exceeds buffer size".to_string(),
+            ));
         }
 
         self.data[offset..end].copy_from_slice(data);
@@ -254,9 +262,7 @@ mod tests {
         let mut ib = IndexBuffer::new(handle, desc);
 
         let data = vec![0u16, 1, 2];
-        let bytes = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, 6)
-        };
+        let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, 6) };
 
         ib.write_data(0, bytes).unwrap();
         assert_eq!(ib.data[0..6], bytes[..]);

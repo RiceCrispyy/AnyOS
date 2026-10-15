@@ -60,7 +60,11 @@ impl D3DVECTOR {
     }
 
     pub fn zero() -> Self {
-        Self { x: 0.0, y: 0.0, z: 0.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
     }
 
     pub fn dot(&self, other: &D3DVECTOR) -> f32 {
