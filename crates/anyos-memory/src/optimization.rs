@@ -39,12 +39,12 @@ impl<T> ObjectPool<T> {
 
     /// Get an object from the pool, or create a new one
     pub fn acquire(&self) -> T {
-        let mut available = self.available.lock();
+        let mut available = self.available.lock().unwrap();
 
         if let Some(obj) = available.pop_front() {
             obj
         } else {
-            let mut total = self.total.lock();
+            let mut total = self.total.lock().unwrap();
             if *total < self.max_size {
                 *total += 1;
                 (self.factory)()
@@ -58,7 +58,7 @@ impl<T> ObjectPool<T> {
 
     /// Return an object to the pool
     pub fn release(&self, obj: T) {
-        let mut available = self.available.lock();
+        let mut available = self.available.lock().unwrap();
 
         if available.len() < self.max_size {
             available.push_back(obj);
@@ -68,12 +68,12 @@ impl<T> ObjectPool<T> {
 
     /// Get the number of available objects
     pub fn available_count(&self) -> usize {
-        self.available.lock().len()
+        self.available.lock().unwrap().len()
     }
 
     /// Get total allocated objects
     pub fn total_count(&self) -> usize {
-        *self.total.lock()
+        *self.total.lock().unwrap()
     }
 }
 
@@ -211,10 +211,13 @@ impl<T: Clone> PooledAllocator<T> {
     where
         F: Fn() -> T + Send + Sync + 'static + Clone,
     {
-        let factory_arc = Arc::new(factory.clone());
+        let factory_arc = Arc::new(factory);
 
         let pools = (0..pool_count)
-            .map(|_| ObjectPool::new(|| factory_arc().clone(), pool_size))
+            .map(|_| {
+                let factory_clone = factory_arc.clone();
+                ObjectPool::new(move || factory_clone(), pool_size)
+            })
             .collect();
 
         Self {
