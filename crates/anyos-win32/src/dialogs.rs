@@ -2,11 +2,14 @@
 //!
 //! Implements Win32 DialogBox, DialogBoxIndirect, and related APIs
 //! Maps to native dialogs through the UIBackend on macOS and other platforms.
+//!
+//! The dialog APIs are not wired into the API table yet, so most of this module
+//! is still unreferenced scaffolding (same as `ui.rs`).
+#![allow(dead_code)]
 
 use crate::api::*;
 use crate::thread::{Halt, Thread};
 use anyos_ui::{ControlType, DialogControl, DialogTemplate};
-use std::collections::HashMap;
 
 /// Dialog template resource structure for DialogBoxIndirect
 /// This maps to the DLGTEMPLATE structure in Win32
@@ -108,12 +111,12 @@ pub fn resource_to_template(resource: &DialogResource, title: &str) -> DialogTem
 /// DialogBox API - creates a modal dialog from a resource template
 pub fn dialog_box(
     t: &mut Thread<'_, '_>,
-    instance: u64,
-    template_name: u64,
+    _instance: u64,
+    _template_name: u64,
     parent: u64,
     dlg_proc: u64,
     init_param: u64,
-    wide: bool,
+    _wide: bool,
 ) -> Result<u64, Halt> {
     // Create a basic dialog window
     // DialogBox creates a modal dialog, showing it and running a nested message loop
@@ -130,7 +133,7 @@ pub fn dialog_box(
 /// DialogBoxIndirect API - creates a modal dialog from an in-memory template
 pub fn dialog_box_indirect(
     t: &mut Thread<'_, '_>,
-    instance: u64,
+    _instance: u64,
     template: u64,
     parent: u64,
     dlg_proc: u64,
@@ -153,12 +156,12 @@ pub fn dialog_box_indirect(
 /// CreateDialogParam API - creates a modeless dialog
 pub fn create_dialog_param(
     t: &mut Thread<'_, '_>,
-    instance: u64,
-    template_name: u64,
+    _instance: u64,
+    _template_name: u64,
     parent: u64,
     dlg_proc: u64,
     init_param: u64,
-    wide: bool,
+    _wide: bool,
 ) -> Result<u64, Halt> {
     let hwnd = create_dialog_window(t, parent, "Dialog", 100, 100, 400, 300, dlg_proc)?;
 
@@ -171,7 +174,7 @@ pub fn create_dialog_param(
 /// CreateDialogIndirectParam API - creates a modeless dialog from template
 pub fn create_dialog_indirect_param(
     t: &mut Thread<'_, '_>,
-    instance: u64,
+    _instance: u64,
     template: u64,
     parent: u64,
     dlg_proc: u64,
@@ -187,6 +190,7 @@ pub fn create_dialog_indirect_param(
 }
 
 /// Helper: Create a dialog window in the UI state
+#[allow(clippy::too_many_arguments)] // mirrors the CreateWindowEx signature
 fn create_dialog_window(
     t: &mut Thread<'_, '_>,
     parent: u64,
@@ -237,7 +241,7 @@ fn post_dialog_message(t: &mut Thread<'_, '_>, hwnd: u64, msg: u32, wp: u64, lp:
 }
 
 /// Helper: Get size of DLGTEMPLATE structure in bytes
-pub fn dlg_template_size(t: &Thread<'_, '_>, template_ptr: u64) -> Option<usize> {
+pub fn dlg_template_size(_t: &Thread<'_, '_>, _template_ptr: u64) -> Option<usize> {
     // This is complex as DLGTEMPLATE has variable-size strings
     // For now, return a reasonable estimate
     Some(256)

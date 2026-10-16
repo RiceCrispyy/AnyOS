@@ -12,3 +12,4 @@ anyos-backend.workspace = true
 anyos-memory.workspace = true
 anyos-interp.workspace = true
 thiserror.workspace = true
+parking_lot.workspace = true

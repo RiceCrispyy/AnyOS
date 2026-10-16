@@ -126,14 +126,22 @@ impl Profiler {
 
     /// Get statistics for all profiled functions
     pub fn get_stats(&self) -> Vec<(u64, u64, u64)> {
-        // Returns (address, call_count, avg_time_ns)
-        self.call_counts
-            .lock()
-            .unwrap()
+        // Returns (address, call_count, avg_time_ns).
+        // Both maps are locked once, in the same order as `get_avg_time`, so this
+        // never re-enters a lock it already holds.
+        let counts = self.call_counts.lock().unwrap();
+        let times = self.execution_times.lock().unwrap();
+        counts
             .iter()
             .map(|(addr, count)| {
                 let cnt = count.load(Ordering::Relaxed);
-                let avg_time = self.get_avg_time(*addr);
+                let avg_time = times
+                    .get(addr)
+                    .map(|entry| {
+                        let total = entry.load(Ordering::Relaxed);
+                        total / cnt.max(1)
+                    })
+                    .unwrap_or(0);
                 (*addr, cnt, avg_time)
             })
             .collect()

@@ -37,6 +37,9 @@ impl Default for RenderState {
     }
 }
 
+/// A placed texture region within the atlas: (x, y, width, height).
+pub type AtlasRegion = (u32, u32, u32, u32);
+
 /// Texture atlas for batch texture uploads
 pub struct TextureAtlas {
     /// Texture atlas size (512x512, 1024x1024, etc.)
@@ -45,8 +48,8 @@ pub struct TextureAtlas {
     /// Texture data
     pub data: Vec<u8>,
 
-    /// Texture entries: region_id -> (x, y, w, h)
-    pub regions: Arc<Mutex<HashMap<u32, (u32, u32, u32, u32)>>>,
+    /// Texture entries: region_id -> region rectangle
+    pub regions: Arc<Mutex<HashMap<u32, AtlasRegion>>>,
 
     /// Next available offset
     pub next_offset: Arc<Mutex<u32>>,
@@ -66,7 +69,7 @@ impl TextureAtlas {
 
     /// Add a texture region to the atlas
     pub fn add_region(
-        &self,
+        &mut self,
         region_id: u32,
         texture_data: &[u8],
         width: u32,
@@ -91,7 +94,7 @@ impl TextureAtlas {
             let mut regions = self.regions.lock().unwrap();
             regions.insert(region_id, (x, y, width, height));
 
-            *offset += (width * height);
+            *offset += width * height;
             Some((x, y))
         } else {
             None
@@ -99,7 +102,7 @@ impl TextureAtlas {
     }
 
     /// Get the position of a region in the atlas
-    pub fn get_region(&self, region_id: u32) -> Option<(u32, u32, u32, u32)> {
+    pub fn get_region(&self, region_id: u32) -> Option<AtlasRegion> {
         self.regions.lock().unwrap().get(&region_id).copied()
     }
 }
@@ -315,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_texture_atlas() {
-        let atlas = TextureAtlas::new(512);
+        let mut atlas = TextureAtlas::new(512);
         let texture_data = vec![255u8; 64 * 64 * 4];
 
         let result = atlas.add_region(0, &texture_data, 64, 64);

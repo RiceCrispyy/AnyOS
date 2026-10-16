@@ -261,7 +261,7 @@ mod tests {
         let handle = IndexBufferHandle(1);
         let mut ib = IndexBuffer::new(handle, desc);
 
-        let data = vec![0u16, 1, 2];
+        let data = [0u16, 1, 2];
         let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, 6) };
 
         ib.write_data(0, bytes).unwrap();

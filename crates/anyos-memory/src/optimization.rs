@@ -47,11 +47,11 @@ impl<T> ObjectPool<T> {
             let mut total = self.total.lock().unwrap();
             if *total < self.max_size {
                 *total += 1;
-                (self.factory)()
+                (*self.factory)()
             } else {
                 drop(total);
                 drop(available);
-                (self.factory)()
+                (*self.factory)()
             }
         }
     }
@@ -215,8 +215,8 @@ impl<T: Clone> PooledAllocator<T> {
 
         let pools = (0..pool_count)
             .map(|_| {
-                let factory_clone = factory_arc.clone();
-                ObjectPool::new(move || factory_clone(), pool_size)
+                let factory = Arc::clone(&factory_arc);
+                ObjectPool::new(move || (*factory)(), pool_size)
             })
             .collect();
 

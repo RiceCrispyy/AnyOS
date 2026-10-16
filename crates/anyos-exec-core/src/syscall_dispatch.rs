@@ -1,7 +1,7 @@
 //! System call dispatching and handling.
 
 use crate::error::{ExecError, ExecResult};
-use std::io;
+use std::io::{self, Read};
 
 /// System call dispatcher for guest code.
 pub struct SyscallDispatcher {

@@ -319,6 +319,10 @@ pub(crate) fn read_u16(t: &Thread<'_, '_>, addr: u64) -> Option<u16> {
     Some(u16::from_le_bytes([b[0], b[1]]))
 }
 
+pub(crate) fn read_i16(t: &Thread<'_, '_>, addr: u64) -> Option<i16> {
+    read_u16(t, addr).map(|v| v as i16)
+}
+
 pub(crate) fn read_u32(t: &Thread<'_, '_>, addr: u64) -> Option<u32> {
     let b = guest_bytes(t, addr, 4)?;
     Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))

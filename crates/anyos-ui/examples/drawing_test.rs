@@ -14,13 +14,13 @@ use anyos_ui::{
 };
 
 #[cfg(target_os = "macos")]
-use anyos_ui::platform::MacOSBackend as Backend;
+use anyos_ui::platform::macos::MacOSBackend as Backend;
 
 #[cfg(target_os = "windows")]
-use anyos_ui::platform::WindowsBackend as Backend;
+use anyos_ui::platform::windows::WindowsBackend as Backend;
 
 #[cfg(target_os = "linux")]
-use anyos_ui::platform::LinuxBackend as Backend;
+use anyos_ui::platform::linux::LinuxBackend as Backend;
 
 fn main() -> anyos_ui::UIResult<()> {
     println!("AnyOS Graphics Test - Phase 2");
@@ -31,10 +31,12 @@ fn main() -> anyos_ui::UIResult<()> {
     println!("Backend initialized");
 
     // Create a test window
-    let mut params = WindowParams::default();
-    params.title = "AnyOS Graphics Test".to_string();
-    params.rect = Rect::new(100, 100, 800, 600);
-    params.style |= 0x10000000; // WS_VISIBLE
+    let params = WindowParams {
+        title: "AnyOS Graphics Test".to_string(),
+        rect: Rect::new(100, 100, 800, 600),
+        style: 0x10000000, // WS_VISIBLE
+        ..WindowParams::default()
+    };
 
     let window = backend.create_window(params)?;
     println!("Window created: {:?}", window);

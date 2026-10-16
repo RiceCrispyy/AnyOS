@@ -16,8 +16,11 @@ pub struct WorkQueue<T> {
     /// Pending work items
     items: Arc<Mutex<HashMap<usize, T>>>,
 
-    /// Next item to process
+    /// Next id handed out by `enqueue`
     next_id: Arc<AtomicUsize>,
+
+    /// Next id handed out by `try_dequeue` (the FIFO read cursor)
+    next_to_take: Arc<AtomicUsize>,
 
     /// Is the queue closed?
     closed: Arc<AtomicBool>,
@@ -28,6 +31,7 @@ impl<T> WorkQueue<T> {
         Self {
             items: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicUsize::new(0)),
+            next_to_take: Arc::new(AtomicUsize::new(0)),
             closed: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -41,16 +45,15 @@ impl<T> WorkQueue<T> {
 
     /// Try to dequeue a work item
     pub fn try_dequeue(&self) -> Option<(usize, T)> {
-        // Simple implementation - production would use better work stealing
-        for _ in 0..100 {
-            let id = self.next_id.load(Ordering::Relaxed);
-            let mut items = self.items.lock().unwrap();
-            if let Some(item) = items.remove(&id) {
-                self.next_id.store(id + 1, Ordering::Relaxed);
-                return Some((id, item));
+        let id = self.next_to_take.load(Ordering::Relaxed);
+        let mut items = self.items.lock().unwrap();
+        match items.remove(&id) {
+            Some(item) => {
+                self.next_to_take.store(id + 1, Ordering::Relaxed);
+                Some((id, item))
             }
+            None => None,
         }
-        None
     }
 
     /// Wait for queue to be empty
@@ -76,6 +79,7 @@ impl<T> Clone for WorkQueue<T> {
         Self {
             items: self.items.clone(),
             next_id: self.next_id.clone(),
+            next_to_take: self.next_to_take.clone(),
             closed: self.closed.clone(),
         }
     }
@@ -119,7 +123,7 @@ pub type Task = Box<dyn FnOnce() + Send>;
 
 impl ThreadPool {
     pub fn new(num_threads: usize) -> Self {
-        let work_queue = WorkQueue::new();
+        let work_queue: WorkQueue<Task> = WorkQueue::new();
         let shutdown = Arc::new(Barrier::new(num_threads + 1));
 
         let mut threads = Vec::new();
@@ -261,7 +265,6 @@ impl<T> LockValue<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU32;
 
     #[test]
     fn test_work_queue() {
@@ -271,8 +274,8 @@ mod tests {
         queue.enqueue(2);
         queue.enqueue(3);
 
-        let (id1, val1) = queue.try_dequeue().unwrap();
-        let (id2, val2) = queue.try_dequeue().unwrap();
+        let (_id1, val1) = queue.try_dequeue().unwrap();
+        let (_id2, val2) = queue.try_dequeue().unwrap();
 
         assert_eq!(val1, 1);
         assert_eq!(val2, 2);

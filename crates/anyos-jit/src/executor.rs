@@ -113,7 +113,7 @@ impl FrameRateMonitor {
             return FrameStats::default();
         }
 
-        let times: Vec<u64> = frames.iter().map(|f| f.total_time()).collect();
+        let mut times: Vec<u64> = frames.iter().map(|f| f.total_time()).collect();
         times.sort_unstable();
 
         let min = times[0];

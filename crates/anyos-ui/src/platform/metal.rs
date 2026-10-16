@@ -2,6 +2,9 @@
 //!
 //! Provides DirectX 9 to Metal translation layer for 3D rendering on macOS.
 
+// Metal support is scaffolding until the Phase 4 rendering work lands.
+#![allow(dead_code)]
+
 use crate::UIError;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,24 +25,20 @@ pub struct MetalDevice {
 
 impl MetalDevice {
     pub fn new() -> Result<Arc<Self>, UIError> {
-        unsafe {
-            // Try to create a Metal device
-            // This is simplified - in a real implementation, we'd use objc-rs to call
-            // MTLCreateSystemDefaultDevice()
-            Ok(Arc::new(Self {
-                _ptr: std::ptr::null_mut(),
-                is_valid: true,
-            }))
-        }
+        // Try to create a Metal device.
+        // This is simplified - in a real implementation, we'd use objc-rs to call
+        // MTLCreateSystemDefaultDevice()
+        Ok(Arc::new(Self {
+            _ptr: std::ptr::null_mut(),
+            is_valid: true,
+        }))
     }
 }
 
 impl Drop for MetalDevice {
     fn drop(&mut self) {
-        // Release Metal device resources
-        unsafe {
-            // In a real implementation, we'd release the MTLDevice here
-        }
+        // Release Metal device resources.
+        // In a real implementation, we'd release the MTLDevice here.
     }
 }
 

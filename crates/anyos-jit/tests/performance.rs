@@ -146,6 +146,6 @@ mod tests {
 
         let stats = profiler.get_stats();
         println!("Concurrent profiling: {} unique addresses", stats.len());
-        assert!(stats.len() > 0);
+        assert!(!stats.is_empty());
     }
 }

@@ -47,14 +47,13 @@ impl HotspotDetector {
     /// Mark an address as a potential hotspot
     pub fn mark_hotspot(&self, addr: u64) {
         let mut hotspots = self.hotspots.lock().unwrap();
-        if !hotspots.contains_key(&addr) {
-            let hotspot = Hotspot {
+        if let std::collections::hash_map::Entry::Vacant(entry) = hotspots.entry(addr) {
+            entry.insert(Hotspot {
                 addr,
                 visit_count: 1,
                 compiling: Arc::new(AtomicBool::new(false)),
                 compiled: Arc::new(AtomicBool::new(false)),
-            };
-            hotspots.insert(addr, hotspot);
+            });
             self.total_detected.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -68,12 +67,7 @@ impl HotspotDetector {
 
     /// Get all detected hotspots
     pub fn get_hotspots(&self) -> Vec<Hotspot> {
-        self.hotspots
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, hs)| hs.clone())
-            .collect()
+        self.hotspots.lock().unwrap().values().cloned().collect()
     }
 
     /// Get hotspots ready for compilation (high visit count, not yet compiled)
@@ -81,13 +75,13 @@ impl HotspotDetector {
         self.hotspots
             .lock()
             .unwrap()
-            .iter()
-            .filter(|(_, hotspot)| {
+            .values()
+            .filter(|hotspot| {
                 hotspot.visit_count > self.threshold
                     && !hotspot.compiled.load(Ordering::Relaxed)
                     && !hotspot.compiling.load(Ordering::Relaxed)
             })
-            .map(|(_, hs)| hs.clone())
+            .cloned()
             .collect()
     }
 

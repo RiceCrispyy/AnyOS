@@ -3,6 +3,12 @@
 //! This module provides native macOS window creation and rendering using NSWindow,
 //! Cocoa APIs, CoreGraphics for drawing, and CoreText for text rendering.
 
+// `objc` 0.2's `msg_send!` expands to `cfg_attr(feature = "cargo-clippy", ..)`;
+// that feature is never declared, so modern rustc flags every expansion site.
+#![allow(unexpected_cfgs)]
+// Dialog/window state is scaffolding until the Phase 3/4 rendering work lands.
+#![allow(dead_code)]
+
 use crate::{
     graphics::{Color, Rect},
     window::{
@@ -10,14 +16,11 @@ use crate::{
     },
     UIBackend, UIError, UIResult,
 };
-use cocoa::appkit::{NSBackingStoreType, NSWindow, NSWindowStyleMask};
+use cocoa::appkit::NSWindowStyleMask;
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
-use core_foundation::base::TCFType;
-use core_foundation::string::CFString;
 use core_graphics::context::CGContext;
-use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use objc::runtime::Object;
-use objc::{class, msg_send};
+use objc::{class, msg_send, sel, sel_impl};
 use objc_foundation::{INSString, NSString};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -84,7 +87,7 @@ impl Default for DrawingState {
 struct DialogState {
     handle: WindowHandle,
     result: Option<i32>,
-    ns_window: *mut NSWindow,
+    ns_window: *mut Object,
     controls: HashMap<u32, DialogControlState>,
 }
 
@@ -119,7 +122,7 @@ struct MacOSWindow {
     class: String,
     visible: bool,
     rect: Rect,
-    ns_window: Option<*mut NSWindow>,
+    ns_window: Option<*mut Object>,
 }
 
 // Raw pointers to Cocoa objects are not Send/Sync by default,
@@ -186,7 +189,7 @@ impl MacOSBackend {
         title: &str,
         rect: Rect,
         style_mask: NSWindowStyleMask,
-    ) -> UIResult<*mut NSWindow> {
+    ) -> UIResult<*mut Object> {
         unsafe {
             // Create NSRect from our Rect
             let ns_rect = NSRect::new(
@@ -195,7 +198,7 @@ impl MacOSBackend {
             );
 
             // Allocate NSWindow
-            let window: *mut NSWindow = msg_send![class!(NSWindow), alloc];
+            let window: *mut Object = msg_send![class!(NSWindow), alloc];
             if window.is_null() {
                 return Err(UIError::WindowCreationFailed(
                     "Failed to allocate NSWindow".to_string(),
@@ -203,7 +206,7 @@ impl MacOSBackend {
             }
 
             // Initialize with content rect, style mask, backing, and defer
-            let window: *mut NSWindow = msg_send![
+            let window: *mut Object = msg_send![
                 window,
                 initWithContentRect: ns_rect
                 styleMask: style_mask
@@ -231,8 +234,8 @@ impl MacOSBackend {
     /// Create controls for a dialog from the template (Phase 3)
     fn create_dialog_controls(
         &mut self,
-        handle: WindowHandle,
-        ns_window: *mut NSWindow,
+        _handle: WindowHandle,
+        ns_window: *mut Object,
         template: &DialogTemplate,
     ) -> UIResult<HashMap<u32, DialogControlState>> {
         let mut controls = HashMap::new();
@@ -359,6 +362,28 @@ impl MacOSBackend {
 
         Ok(controls)
     }
+
+    fn get_drawing_state_mut(&mut self, dc: u64) -> UIResult<&mut DrawingState> {
+        self.drawing_states
+            .get_mut(&dc)
+            .ok_or_else(|| UIError::InvalidHandle(format!("0x{:x}", dc)))
+    }
+
+    #[allow(dead_code)] // used once CoreGraphics rendering is wired up
+    fn color_to_cgcolor(color: Color) -> core_graphics::color::CGColor {
+        let components = [
+            (color.r as f64) / 255.0,
+            (color.g as f64) / 255.0,
+            (color.b as f64) / 255.0,
+            (color.a as f64) / 255.0,
+        ];
+        core_graphics::color::CGColor::rgb(
+            components[0],
+            components[1],
+            components[2],
+            components[3],
+        )
+    }
 }
 
 impl UIBackend for MacOSBackend {
@@ -367,10 +392,10 @@ impl UIBackend for MacOSBackend {
         let visible = (params.style & 0x10000000) != 0; // WS_VISIBLE
 
         // Build NSWindowStyleMask from Windows style flags
-        let style_mask = NSWindowStyleMask::NSWindowStyleMaskTitled
-            | NSWindowStyleMask::NSWindowStyleMaskClosable
-            | NSWindowStyleMask::NSWindowStyleMaskMiniaturizable
-            | NSWindowStyleMask::NSWindowStyleMaskResizable;
+        let style_mask = NSWindowStyleMask::NSTitledWindowMask
+            | NSWindowStyleMask::NSClosableWindowMask
+            | NSWindowStyleMask::NSMiniaturizableWindowMask
+            | NSWindowStyleMask::NSResizableWindowMask;
 
         // Create native NSWindow
         let ns_window = self.create_ns_window(&params.title, params.rect, style_mask)?;
@@ -427,27 +452,6 @@ impl UIBackend for MacOSBackend {
     fn destroy_dc(&mut self, dc: u64) -> UIResult<()> {
         self.drawing_states.remove(&dc);
         Ok(())
-    }
-
-    fn get_drawing_state_mut(&mut self, dc: u64) -> UIResult<&mut DrawingState> {
-        self.drawing_states
-            .get_mut(&dc)
-            .ok_or_else(|| UIError::InvalidHandle(format!("0x{:x}", dc)))
-    }
-
-    fn color_to_cgcolor(color: Color) -> core_graphics::color::CGColor {
-        let components = [
-            (color.r as f64) / 255.0,
-            (color.g as f64) / 255.0,
-            (color.b as f64) / 255.0,
-            (color.a as f64) / 255.0,
-        ];
-        core_graphics::color::CGColor::rgba(
-            components[0],
-            components[1],
-            components[2],
-            components[3],
-        )
     }
 
     fn text_out(&mut self, dc: u64, x: i32, y: i32, text: &str, color: Color) -> UIResult<()> {
@@ -643,8 +647,8 @@ impl UIBackend for MacOSBackend {
         let handle = self.next_handle();
 
         // Build NSWindowStyleMask for dialog (no minimize/maximize)
-        let style_mask = NSWindowStyleMask::NSWindowStyleMaskTitled
-            | NSWindowStyleMask::NSWindowStyleMaskClosable;
+        let style_mask =
+            NSWindowStyleMask::NSTitledWindowMask | NSWindowStyleMask::NSClosableWindowMask;
 
         // Create native NSWindow for dialog
         let ns_window = self.create_ns_window(&template.title, template.rect, style_mask)?;
@@ -685,10 +689,10 @@ impl UIBackend for MacOSBackend {
         let handle = self.next_handle();
 
         // Build NSWindowStyleMask for dialog
-        let style_mask = NSWindowStyleMask::NSWindowStyleMaskTitled
-            | NSWindowStyleMask::NSWindowStyleMaskClosable
-            | NSWindowStyleMask::NSWindowStyleMaskMiniaturizable
-            | NSWindowStyleMask::NSWindowStyleMaskResizable;
+        let style_mask = NSWindowStyleMask::NSTitledWindowMask
+            | NSWindowStyleMask::NSClosableWindowMask
+            | NSWindowStyleMask::NSMiniaturizableWindowMask
+            | NSWindowStyleMask::NSResizableWindowMask;
 
         // Create native NSWindow for dialog
         let ns_window = self.create_ns_window(&template.title, template.rect, style_mask)?;
@@ -741,7 +745,10 @@ impl UIBackend for MacOSBackend {
             Err(UIError::InvalidHandle(format!("0x{:x}", handle.0)))
         }
     }
+}
 
+// Deferred-render helpers: not part of the `UIBackend` trait.
+impl MacOSBackend {
     /// Render queued drawing operations using CoreGraphics
     /// This is typically called from NSView's drawRect: callback
     #[allow(dead_code)]

@@ -10,18 +10,22 @@
 //! - Code is patched to jump to native version when it reaches threshold
 //! - Seamless fallback to interpreter if issues arise
 
+// Scaffolding: the code generator, profiler and thread pool are not wired into
+// the execution path yet (the backend still falls back to the interpreter), so
+// several pieces are intentionally unreferenced for now.
+#![allow(dead_code)]
+
 pub mod codegen;
 pub mod executor;
 pub mod hotspot;
 pub mod profiler;
 pub mod threading;
 
-use anyos_backend::{ExecutionBackend, GuestArch, GuestContext, GuestFault, StopReason};
+use anyos_backend::{ExecutionBackend, GuestArch, GuestContext, StopReason};
 use anyos_memory::AddressSpace;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::RwLock as StdRwLock;
 use thiserror::Error;
 
 /// Errors that can occur during JIT compilation
@@ -100,7 +104,7 @@ impl JitBackend {
         ctx: &GuestContext,
     ) -> Result<Arc<CompiledCode>, JitError> {
         // Try to generate ARM64 code for this region
-        let code_gen = codegen::Arm64Generator::new();
+        let mut code_gen = codegen::Arm64Generator::new();
         let compiled = code_gen.compile_region(addr, ctx)?;
 
         let compiled = Arc::new(compiled);

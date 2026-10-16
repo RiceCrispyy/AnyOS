@@ -1,7 +1,10 @@
 //! Guest thread state and execution.
 
-use crate::error::{ExecError, ExecResult};
+#[cfg(target_arch = "x86_64")]
+use crate::error::ExecResult;
 use parking_lot::Mutex;
+#[cfg(target_arch = "x86_64")]
+use std::arch::asm;
 use std::sync::Arc;
 
 /// CPU registers available to guest code.
@@ -136,6 +139,7 @@ impl GuestThread {
 
     /// Save the current host register state (x86-64 only).
     /// This is used internally to preserve host context during guest execution.
+    #[allow(dead_code)] // placeholder: wired up once guest execution lands
     #[cfg(target_arch = "x86_64")]
     fn save_host_state() -> ExecResult<u64> {
         // Get the current stack pointer

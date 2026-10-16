@@ -2,7 +2,6 @@
 
 use anyos_memory::MemoryError;
 use std::io;
-use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunOptions {

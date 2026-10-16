@@ -4,8 +4,8 @@
 
 use crate::{
     buffers::{
-        IndexBuffer, IndexBufferDesc, IndexBufferHandle, IndexFormat, VertexBuffer,
-        VertexBufferDesc, VertexBufferHandle,
+        IndexBuffer, IndexBufferDesc, IndexBufferHandle, VertexBuffer, VertexBufferDesc,
+        VertexBufferHandle,
     },
     shaders::{
         PixelShader, PixelShaderConstants, PixelShaderHandle, VertexShader, VertexShaderConstants,
@@ -14,7 +14,7 @@ use crate::{
     textures::{Texture, TextureDesc, TextureHandle},
     types::D3DMATRIX,
     D3DError, D3DResult, D3DBLEND, D3DCMPFUNC, D3DCULL, D3DFILLMODE, D3DPRIMITIVETYPE,
-    D3DRENDERSTATETYPE, D3DSAMPLERSTATETYPE, D3DTEXTUREFILTERTYPE, D3DTRANSFORMSTATETYPE,
+    D3DRENDERSTATETYPE, D3DSAMPLERSTATETYPE, D3DTRANSFORMSTATETYPE,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +24,7 @@ use std::sync::Arc;
 pub struct D3DDeviceHandle(pub u32);
 
 /// Render state tracking
+#[allow(dead_code)] // fields are read once real rendering lands
 #[derive(Debug, Clone)]
 struct RenderState {
     render_states: HashMap<D3DRENDERSTATETYPE, u32>,
@@ -87,6 +88,7 @@ pub struct D3DDevice {
     active_index_buffer: Option<IndexBufferHandle>,
 
     // Platform-specific data
+    #[allow(dead_code)] // populated by the platform backend once it exists
     platform_data: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
@@ -358,7 +360,7 @@ impl D3DDevice {
         &mut self,
         stream_number: u32,
         buffer_handle: Option<VertexBufferHandle>,
-        offset: u32,
+        _offset: u32,
         stride: u32,
     ) -> D3DResult<()> {
         if let Some(handle) = buffer_handle {
@@ -452,9 +454,9 @@ impl D3DDevice {
     pub fn draw_indexed_primitive(
         &self,
         primitive_type: D3DPRIMITIVETYPE,
-        base_vertex_index: i32,
-        min_vertex_index: u32,
-        num_vertices: u32,
+        _base_vertex_index: i32,
+        _min_vertex_index: u32,
+        _num_vertices: u32,
         start_index: u32,
         primitive_count: u32,
     ) -> D3DResult<()> {
@@ -493,7 +495,7 @@ impl D3DDevice {
     }
 
     /// Clear the render targets
-    pub fn clear(&self, flags: u32, color: u32, _z: f32, _stencil: u32) -> D3DResult<()> {
+    pub fn clear(&self, _flags: u32, _color: u32, _z: f32, _stencil: u32) -> D3DResult<()> {
         // This would actually clear the render targets in the backend
         // For now, just validate the call
         if !self.in_scene {

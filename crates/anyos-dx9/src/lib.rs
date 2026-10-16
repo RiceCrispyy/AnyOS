@@ -3,6 +3,11 @@
 //! Provides a subset of Direct3D 9 API that games depend on.
 //! Backends (Metal on macOS, etc.) implement actual rendering.
 
+// The Direct3D SDK spells its identifiers in SCREAMING_SNAKE_CASE
+// (D3DRS_ZENABLE, D3DTS_WORLD, …). Keep them verbatim so this API mirrors the
+// real thing instead of rewriting them to Rust's CamelCase.
+#![allow(non_camel_case_types)]
+
 pub mod buffers;
 pub mod device;
 pub mod shaders;
@@ -142,7 +147,7 @@ pub enum D3DCULL {
 
 /// Matrix types for SetTransform
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum D3DTRANSFORMSTATETYPE {
     D3DTS_WORLD = 256,
     D3DTS_VIEW = 2,
@@ -159,7 +164,7 @@ pub enum D3DTRANSFORMSTATETYPE {
 
 /// Render states
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum D3DRENDERSTATETYPE {
     D3DRS_ZENABLE = 7,
     D3DRS_FILLMODE = 8,
@@ -235,7 +240,7 @@ pub enum D3DRENDERSTATETYPE {
 
 /// Sampler states
 #[repr(u32)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum D3DSAMPLERSTATETYPE {
     D3DSAMP_ADDRESSU = 1,
     D3DSAMP_ADDRESSV = 2,

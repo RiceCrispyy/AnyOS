@@ -9,7 +9,7 @@
 
 use crate::api::*;
 use crate::thread::{Halt, Thread};
-use anyos_ui::{MessageType, UIBackend, WindowParams};
+use anyos_ui::{MessageType, WindowParams};
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -150,6 +150,7 @@ const WM_SETTEXT: u32 = 0x000C;
 const WM_GETTEXT: u32 = 0x000D;
 const WM_GETTEXTLENGTH: u32 = 0x000E;
 const WM_PAINT: u32 = 0x000F;
+const WM_CLOSE: u32 = 0x0010;
 const WM_QUIT: u32 = 0x0012;
 const WM_INITDIALOG: u32 = 0x0110;
 const WM_COMMAND: u32 = 0x0111;
@@ -463,6 +464,9 @@ fn peek_get_message(
                 MessageType::RightButtonUp => 0x0205,    // WM_RBUTTONUP
                 MessageType::MiddleButtonDown => 0x0207, // WM_MBUTTONDOWN
                 MessageType::MiddleButtonUp => 0x0208,   // WM_MBUTTONUP
+                MessageType::InitDialog => WM_INITDIALOG,
+                MessageType::Command => WM_COMMAND,
+                MessageType::Close => WM_CLOSE,
                 MessageType::Other(code) => code,
             };
 
@@ -782,7 +786,7 @@ fn create_window_ex_dialog(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Res
     Ok(hwnd)
 }
 
-fn is_dialog_message(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+fn is_dialog_message(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     // IsDialogMessage: checks if a message is intended for the dialog
     // Phase 3: Would pre-process keyboard messages for tab order, etc.
     let _hwnd = a[0];

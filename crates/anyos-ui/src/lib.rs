@@ -151,15 +151,11 @@ pub trait UIBackend: Send + Sync {
 /// This will be stored in the kernel and accessed through call gate
 pub struct UIManager {
     backend: Option<Box<dyn UIBackend>>,
-    window_count: u32,
 }
 
 impl UIManager {
     pub fn new() -> Self {
-        Self {
-            backend: None,
-            window_count: 0,
-        }
+        Self { backend: None }
     }
 
     /// Initialize the backend for this platform
@@ -187,7 +183,7 @@ impl UIManager {
         self.backend.as_ref().map(|b| b.as_ref())
     }
 
-    pub fn backend_mut(&mut self) -> Option<&mut dyn UIBackend> {
+    pub fn backend_mut(&mut self) -> Option<&mut (dyn UIBackend + 'static)> {
         self.backend.as_mut().map(|b| b.as_mut())
     }
 }
