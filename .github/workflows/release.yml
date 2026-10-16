@@ -1,0 +1,214 @@
+name: Release
+
+# Pushing a tag like `v0.2.0` builds `anyos` and the `anyos-gui` app (AnyOS.app on
+# macOS) for Linux, Windows and macOS and attaches the archives to the GitHub
+# release for that tag (creating the release if it does not exist yet). Pull requests that touch this file, and manual runs,
+# build and upload the archives as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build liblzma from source instead of linking the runner's shared copy, so the
+  # binaries do not depend on liblzma being installed on the user's machine.
+  LZMA_API_STATIC: "1"
+  # The version the binaries report and the self-updater compares against the
+  # latest release. Empty for non-tag runs, which then never auto-update.
+  ANYOS_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x86-64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS universal
+            os: macos-latest
+            target: universal2-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'universal2-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+
+      - name: Install zig
+        if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      # Linux: link against glibc 2.17 so the binary runs on older distributions too.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo zigbuild --release --workspace --target x86_64-unknown-linux-gnu.2.17
+
+      # Windows: link the C runtime statically so no Visual C++ redistributable is needed.
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --workspace --target x86_64-pc-windows-msvc
+
+      # macOS: one universal binary that runs natively on Apple Silicon and Intel Macs.
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release --workspace --target aarch64-apple-darwin
+          cargo build --release --workspace --target x86_64-apple-darwin
+          mkdir -p target/universal2-apple-darwin/release
+          for b in anyos anyos-gui; do
+            if [[ -f "target/aarch64-apple-darwin/release/$b" ]] && [[ -f "target/x86_64-apple-darwin/release/$b" ]]; then
+              lipo -create -output target/universal2-apple-darwin/release/$b \
+                target/aarch64-apple-darwin/release/$b \
+                target/x86_64-apple-darwin/release/$b
+              lipo -info target/universal2-apple-darwin/release/$b
+            fi
+          done
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          name="anyos-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          out="target/${{ matrix.target }}/release"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            bin="$out/anyos.exe"
+            # Not AnyOS.exe: that name would clash with anyos.exe on Windows.
+            if [[ -f "$out/anyos-gui.exe" ]]; then
+              cp "$out/anyos-gui.exe" "dist/$name/"
+            fi
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            bin="$out/anyos"
+            # Double-clickable app; the GUI finds the anyos tool beside it.
+            app="dist/$name/AnyOS.app/Contents"
+            mkdir -p "$app/MacOS"
+            if [[ -f "$out/anyos-gui" ]]; then
+              cp "$out/anyos-gui" "$app/MacOS/"
+            fi
+            if [[ -f "$out/anyos" ]]; then
+              cp "$out/anyos" "$app/MacOS/"
+            fi
+            if [[ -f "apps/anyos-gui/macos/Info.plist" ]]; then
+              sed "s/@VERSION@/${version#v}/" apps/anyos-gui/macos/Info.plist > "$app/Info.plist"
+            fi
+            # Verify the app bundle has at least one binary
+            if [[ ! -f "dist/$name/AnyOS.app/Contents/MacOS/anyos-gui" ]] && [[ ! -f "dist/$name/AnyOS.app/Contents/MacOS/anyos" ]]; then
+              echo "::warning::AnyOS.app was not built with expected binaries"
+            fi
+          else
+            bin="$out/anyos"
+            if [[ -f "$out/anyos-gui" ]]; then
+              cp "$out/anyos-gui" "dist/$name/"
+            fi
+          fi
+
+          # Copy documentation files if they exist
+          for doc in README.md LICENSE.md CHANGELOG.md; do
+            if [[ -f "$doc" ]]; then
+              cp "$doc" "dist/$name/"
+            fi
+          done
+
+          # Check if binary exists and get version
+          if [[ -f "$bin" ]]; then
+            reported="$("$bin" --version | tr -d '\r')" || reported="unknown"
+            echo "Binary version: $reported"
+            if [[ -n "${ANYOS_VERSION}" && "$reported" != "anyos ${ANYOS_VERSION#v}" ]]; then
+              echo "::warning::binary reports '$reported', expected 'anyos ${ANYOS_VERSION#v}'"
+            fi
+          else
+            echo "::warning::Binary not found at $bin"
+          fi
+
+          cd dist
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            archive="$name.zip"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            shasum -a 256 "$archive" > "$archive.sha256"
+          else
+            sha256sum "$archive" > "$archive.sha256"
+          fi
+          echo "ARCHIVE=dist/$archive" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anyos-${{ matrix.target }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat dist/*.sha256 > dist/SHA256SUMS
+          rm dist/*.sha256
+          ls -l dist
+          # A tag with a hyphen is a pre-release (`v1.0.0-alpha`, `v1.0.0-rc.1`).
+          # Mark it as such so `anyos update` never offers it to users running a
+          # stable release: the updater skips prereleases (see anyos-update).
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            if [[ -n "$prerelease" ]]; then
+              gh release edit "$TAG" --prerelease
+            fi
+          elif [[ -n "$prerelease" ]]; then
+            gh release create "$TAG" dist/* --title "AnyOS $TAG" --generate-notes --verify-tag --prerelease
+          else
+            gh release create "$TAG" dist/* --title "AnyOS $TAG" --generate-notes --verify-tag
+          fi

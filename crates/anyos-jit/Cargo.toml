@@ -1,0 +1,15 @@
+[package]
+name = "anyos-jit"
+description = "JIT compilation backend for AnyOS with ARM64 native code generation and profile-guided optimization."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyos-backend.workspace = true
+anyos-memory.workspace = true
+anyos-interp.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "anyos-interp"
+description = "Portable x86 / x86-64 interpreter backend for AnyOS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyos-backend.workspace = true
+anyos-memory.workspace = true

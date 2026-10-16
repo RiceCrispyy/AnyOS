@@ -1,0 +1,5 @@
+/target
+*.whl
+anyos/Launcher
+build/
+/scalarDiagnostics/

@@ -1,0 +1,12 @@
+[package]
+name = "anyos-package"
+description = "Recognises installers and app packages (NSIS, Inno Setup, MSI, WiX Burn, .deb, .rpm, .pkg, .dmg, AppImage) for AnyOS. Never executes code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyos-pe.workspace = true
+serde.workspace = true

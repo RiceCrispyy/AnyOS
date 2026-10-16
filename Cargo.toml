@@ -1,0 +1,83 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/anyos-pe",
+    "crates/anyos-memory",
+    "crates/anyos-loader",
+    "crates/anyos-net",
+    "crates/anyos-format",
+    "crates/anyos-elf",
+    "crates/anyos-linux",
+    "crates/anyos-exec",
+    "crates/anyos-exec-core",
+    "crates/anyos-package",
+    "crates/anyos-env",
+    "crates/anyos-install",
+    "crates/anyos-backend",
+    "crates/anyos-interp",
+    "crates/anyos-jit",
+    "crates/anyos-win32",
+    "crates/anyos-ui",
+    "crates/anyos-dx9",
+    "crates/anyos-update",
+    "apps/anyos-cli",
+    "apps/anyos-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93"
+license = "PolyForm-Noncommercial-1.0.0"
+publish = false
+
+[workspace.dependencies]
+anyos-pe = { path = "crates/anyos-pe" }
+anyos-memory = { path = "crates/anyos-memory" }
+anyos-loader = { path = "crates/anyos-loader" }
+anyos-net = { path = "crates/anyos-net" }
+anyos-format = { path = "crates/anyos-format" }
+anyos-elf = { path = "crates/anyos-elf" }
+anyos-linux = { path = "crates/anyos-linux" }
+anyos-exec = { path = "crates/anyos-exec" }
+anyos-exec-core = { path = "crates/anyos-exec-core" }
+anyos-package = { path = "crates/anyos-package" }
+anyos-env = { path = "crates/anyos-env" }
+anyos-install = { path = "crates/anyos-install" }
+anyos-backend = { path = "crates/anyos-backend" }
+anyos-interp = { path = "crates/anyos-interp" }
+anyos-jit = { path = "crates/anyos-jit" }
+anyos-win32 = { path = "crates/anyos-win32" }
+anyos-ui = { path = "crates/anyos-ui" }
+anyos-dx9 = { path = "crates/anyos-dx9" }
+anyos-update = { path = "crates/anyos-update" }
+goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64", "elf32", "elf64"] }
+libc = "0.2"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+toml = "1"
+msi = "0.10"
+cab = "0.6"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "lzma"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+lzma-rust2 = { version = "0.22", default-features = false, features = ["std"] }
+tar = "0.4"
+xz2 = "0.1"
+zstd = { version = "0.14", default-features = false }
+xara = "0.4"
+# GUI: glow (OpenGL) instead of the default wgpu keeps the app small and quick to build.
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.17"
+# Self-update: HTTPS with the OS certificate store, so proxies the OS trusts work too.
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+sha2 = "0.10"
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
+# Performance optimization
+parking_lot = "0.12"
+dashmap = "5.5"
+rayon = "1.8"
+
+[profile.release]
+lto = "thin"
