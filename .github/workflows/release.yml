@@ -195,8 +195,20 @@ jobs:
           cat dist/*.sha256 > dist/SHA256SUMS
           rm dist/*.sha256
           ls -l dist
+          # A tag with a hyphen is a pre-release (`v1.0.0-alpha`, `v1.0.0-rc.1`).
+          # Mark it as such so `anyos update` never offers it to users running a
+          # stable release: the updater skips prereleases (see anyos-update).
+          prerelease=""
+          case "$TAG" in
+            *-*) prerelease="--prerelease" ;;
+          esac
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
+            if [[ -n "$prerelease" ]]; then
+              gh release edit "$TAG" --prerelease
+            fi
+          elif [[ -n "$prerelease" ]]; then
+            gh release create "$TAG" dist/* --title "AnyOS $TAG" --generate-notes --verify-tag --prerelease
           else
             gh release create "$TAG" dist/* --title "AnyOS $TAG" --generate-notes --verify-tag
           fi
