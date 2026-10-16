@@ -82,3 +82,4 @@ EXPORTS
   wsprintfA
   wsprintfW
   RaiseException@16
+  RtlUnwind@16

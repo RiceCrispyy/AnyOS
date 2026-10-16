@@ -164,6 +164,19 @@ static CORE: &[Api] = &[
     k32("RaiseFailFastException", 3, |_, _| {
         Err(Halt::Exit(0xC000_0409))
     }),
+    // RtlUnwind(TargetFrame, TargetIp, ExceptionRecord, ReturnValue): the
+    // unwind Delphi's RTL performs before entering an `except` block.
+    k32("RtlUnwind", 4, |t, a| {
+        if t.long_mode() {
+            return Err(crate::RunError::UnimplementedApi {
+                dll: "kernel32".into(),
+                symbol: "RtlUnwind on x64 (its table-driven unwinding)".into(),
+                caller: t.describe(read_ret_addr(t)),
+            }
+            .into());
+        }
+        crate::seh::unwind_32(t, a[0], a[2], a[3])
+    }),
     k32("AddVectoredExceptionHandler", 2, |_, a| Ok(a[1].max(1))),
     k32("RemoveVectoredExceptionHandler", 1, |_, _| Ok(1)),
     k32("AddVectoredContinueHandler", 2, |_, a| Ok(a[1].max(1))),

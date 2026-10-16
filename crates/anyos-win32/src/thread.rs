@@ -524,7 +524,11 @@ impl<'a, 'b> Thread<'a, 'b> {
         let result = self.call_from(target, args);
         self.nested_loops -= 1;
         self.stack_top = saved_top;
-        self.ctx = saved;
+        // An API that resumed the guest somewhere else (by unwinding to a
+        // handler, say) must not have its new context thrown away here.
+        if !matches!(result, Err(Halt::DirectResume)) {
+            self.ctx = saved;
+        }
         result
     }
 
@@ -609,6 +613,32 @@ impl<'a, 'b> Thread<'a, 'b> {
                 }
                 StopReason::Breakpoint { address } => {
                     let Some(entry) = self.process.call_gate.lookup(address).cloned() else {
+                        // A trap inside a call-gate stub but not on its first byte:
+                        // the guest resumed just past the trap of a call whose
+                        // exception a filter handled (see `seh`). On Windows that
+                        // resume carries on inside the API's own code, so the call
+                        // returns to its caller -- not into the stub's padding.
+                        let landed = self
+                            .process
+                            .call_gate
+                            .owner(address)
+                            .map(|(e, offset)| (e.clone(), offset));
+                        if let Some((entry, offset)) = landed {
+                            if offset != 0 {
+                                if let Some(api) = api::find(&entry.dll, &entry.symbol) {
+                                    self.trace_note(&format!(
+                                        "{}!{} resumed inside its call gate; returning to the caller",
+                                        entry.dll, entry.symbol
+                                    ));
+                                    self.ret(api, 0)?;
+                                    if self.yield_now && scheduler {
+                                        self.yield_now = false;
+                                        self.schedule()?;
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
                         return Err(RunError::Breakpoint {
                             location: self.describe(address),
                         }
@@ -991,8 +1021,12 @@ impl<'a, 'b> Thread<'a, 'b> {
 
     /// `module+0x1234`, `the call gate` or a raw address.
     pub fn describe(&self, addr: u64) -> String {
-        if let Some(e) = self.process.call_gate.lookup(addr) {
-            return format!("the call gate ({}!{})", e.dll, e.symbol);
+        if let Some((e, offset)) = self.process.call_gate.owner(addr) {
+            return if offset == 0 {
+                format!("the call gate ({}!{})", e.dll, e.symbol)
+            } else {
+                format!("the call gate ({}!{})+{offset:#x}", e.dll, e.symbol)
+            };
         }
         for m in &self.process.modules {
             if addr >= m.base && addr < m.base + m.size {

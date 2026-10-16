@@ -26,6 +26,9 @@ typedef __SIZE_TYPE__ SIZE_T;
 typedef __UINTPTR_TYPE__ ULONG_PTR;
 typedef ULONG_PTR DWORD_PTR;
 __declspec(dllimport) void WINAPI RaiseException(DWORD, DWORD, DWORD, const ULONG_PTR *);
+/* Windows declares this VOID; the fixture reads the value it leaves in EAX, so
+ * it is declared as returning it (same stdcall, same 16 argument bytes). */
+__declspec(dllimport) DWORD WINAPI RtlUnwind(void *, void *, void *, void *);
 typedef void *HKEY;
 typedef long LSTATUS;
 typedef DWORD(WINAPI *THREAD_START)(void *);

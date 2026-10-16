@@ -376,6 +376,12 @@ static void time_env_system(void) {
  *
  * Exception code 0x0EEDFADE is the code Delphi / Inno Setup uses.
  *
+ * A second case below covers the other half of the same contract: a filter
+ * that claims the exception with ExceptionContinueExecution but leaves the
+ * CONTEXT alone. On Windows the thread then carries on just past the raise, so
+ * RaiseException returns to its caller -- a call gate must not leave the
+ * thread running into its own trap padding.
+ *
  * Only compiled for x86 (i386) because the chain is FS:[0]-based; x64 uses
  * table-driven unwind which AnyOS handles separately.
  */
@@ -475,8 +481,250 @@ static void seh(void) {
     check(seh_handler_called, "SEH ExceptionContinueExecution (Delphi 0x0EEDFADE)");
 }
 
+/* The Delphi / Inno Setup shape of the same thing: the filter returns
+ * ExceptionContinueExecution without touching the CONTEXT at all. Execution
+ * resumes where the runtime says the exception happened -- just past the
+ * raise -- so RaiseException returns to this call site. */
+static volatile int seh_continue_called;
+static volatile int seh_continue_returned;
+
+static DWORD WINAPI seh_continue_handler(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)rec; (void)frame; (void)ctx; (void)disp;
+    seh_continue_called = 1;
+    return 0; /* ExceptionContinueExecution, CONTEXT left as it was */
+}
+
+static void seh_continue(void) {
+    SEH_FRAME frame;
+    seh_continue_called = 0;
+    seh_continue_returned = 0;
+
+    DWORD old_head;
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(old_head));
+    frame.next    = old_head;
+    frame.handler = (DWORD)(ULONG_PTR)&seh_continue_handler;
+    __asm__ volatile("mov %0, %%fs:0" :: "r"((DWORD)(ULONG_PTR)&frame) : "memory");
+
+    __asm__ volatile(
+        "push %%eax\n\t"
+        "push %%ecx\n\t"
+        "push %%edx\n\t"
+        "push $0\n\t"          /* lpArguments   */
+        "push $0\n\t"          /* nNumberOfArguments */
+        "push $0\n\t"          /* dwExceptionFlags */
+        "push $0x0EEDFADE\n\t" /* dwExceptionCode */
+        "call *%1\n\t"
+        /* Reached only if RaiseException returned to us. */
+        "movl $1, %0\n\t"
+        "pop %%edx\n\t"
+        "pop %%ecx\n\t"
+        "pop %%eax\n\t"
+        : "=m"(seh_continue_returned)
+        : "r"((DWORD)(ULONG_PTR)RaiseException)
+        : "memory", "eax", "ecx", "edx", "cc"
+    );
+
+    __asm__ volatile("mov %0, %%fs:0" :: "r"(old_head) : "memory");
+
+    check(seh_continue_called, "SEH filter ran (untouched CONTEXT)");
+    check(seh_continue_returned, "SEH ContinueExecution returns from RaiseException");
+}
+
+/* ---- RtlUnwind -----------------------------------------------------------
+ * Delphi / Inno Setup run the `finally` code of the frames they unwind and pop
+ * them before entering an `except` block, then carry on where the raise left
+ * off with the raise's return value in EAX. RtlUnwind calls the handlers of the
+ * frames *inside* the target frame with EXCEPTION_UNWINDING set, does *not*
+ * call the target frame's own handler, and returns. */
+
+static volatile int   rtl_inner_calls;
+static volatile DWORD rtl_inner_flags;    /* ExceptionFlags of the last call */
+static volatile int   rtl_target_calls;
+static volatile int   rtl_target_unwound; /* the target handler called by the unwind? */
+static volatile DWORD rtl_value;          /* EAX after RtlUnwind returned */
+static volatile DWORD rtl_resume_eip;     /* just after the raise */
+static SEH_FRAME rtl_inner_frame;
+static SEH_FRAME rtl_target_frame;
+
+static DWORD WINAPI rtl_inner_handler(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)frame; (void)ctx; (void)disp;
+    rtl_inner_calls++;
+    rtl_inner_flags = ((DWORD *)rec)[1]; /* ExceptionFlags */
+    return 1; /* ExceptionContinueSearch: this frame only has cleanup */
+}
+
+static DWORD WINAPI rtl_target_handler(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)frame; (void)disp;
+    rtl_target_calls++;
+    if (((DWORD *)rec)[1] & 2) { /* EXCEPTION_UNWINDING */
+        rtl_target_unwound = 1;
+        return 1;
+    }
+    /* The search reached the frame that handles the exception: unwind the
+     * frames inside it first, the way the RTL does. */
+    rtl_value = (DWORD)(ULONG_PTR)RtlUnwind(&rtl_target_frame, 0, rec,
+                                           (void *)(ULONG_PTR)0x1234);
+    /* Back from the unwind: enter the "except block". */
+    ctx->eip = rtl_resume_eip;
+    return 0; /* ExceptionContinueExecution */
+}
+
+static void rtl_unwind(void) {
+    DWORD old_head, head_after;
+    rtl_inner_calls = rtl_target_calls = rtl_target_unwound = 0;
+    rtl_inner_flags = rtl_value = 0;
+
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(old_head));
+    rtl_target_frame.next    = old_head;
+    rtl_target_frame.handler = (DWORD)(ULONG_PTR)&rtl_target_handler;
+    rtl_inner_frame.next     = (DWORD)(ULONG_PTR)&rtl_target_frame;
+    rtl_inner_frame.handler  = (DWORD)(ULONG_PTR)&rtl_inner_handler;
+    __asm__ volatile("mov %0, %%fs:0" :: "r"((DWORD)(ULONG_PTR)&rtl_inner_frame) : "memory");
+
+    __asm__ volatile(
+        "push %%eax\n\t"
+        "push %%ecx\n\t"
+        "push %%edx\n\t"
+        "push $0\n\t"          /* lpArguments   */
+        "push $0\n\t"          /* nNumberOfArguments */
+        "push $0\n\t"          /* dwExceptionFlags */
+        "push $0x0EEDFADE\n\t" /* dwExceptionCode */
+        "lea 1f, %%eax\n\t"
+        "mov %%eax, %0\n\t"
+        "call *%1\n\t"
+        "1:\n\t"
+        "pop %%edx\n\t"
+        "pop %%ecx\n\t"
+        "pop %%eax\n\t"
+        : "=m"(rtl_resume_eip)
+        : "r"((DWORD)(ULONG_PTR)RaiseException)
+        : "memory", "eax", "ecx", "edx", "cc");
+
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(head_after));
+    __asm__ volatile("mov %0, %%fs:0" :: "r"(old_head) : "memory");
+
+    check(rtl_inner_calls == 2, "RtlUnwind runs the inner frame's handler");
+    check((rtl_inner_flags & 2) != 0, "RtlUnwind sets EXCEPTION_UNWINDING");
+    check(rtl_target_calls == 1, "RtlUnwind leaves the target frame alone");
+    check(!rtl_target_unwound, "the target frame is not called during the unwind");
+    check(rtl_value == 0x1234, "RtlUnwind leaves ReturnValue in EAX");
+    check(head_after == (DWORD)(ULONG_PTR)&rtl_target_frame, "RtlUnwind pops the unwound frames");
+}
+
+/* The other half of RtlUnwind, and the one an `except` block relies on: a frame
+ * handler reached by the unwind answers ExceptionContinueExecution with a
+ * CONTEXT of its own, and the thread resumes there -- the call to RtlUnwind
+ * never returns. Delphi's frames set both EIP and ESP, so the fixture does too. */
+static volatile int   rtl_handler_inner_unwound;
+static volatile int   rtl_handler_resumed;  /* resumed inside the handler */
+static volatile int   rtl_handler_returned; /* or came back from RtlUnwind */
+static volatile DWORD rtl_handler_eip;
+static volatile DWORD rtl_handler_esp;
+static volatile int   rtl_handler_target_calls;
+static SEH_FRAME rtl_handler_inner_frame;
+static SEH_FRAME rtl_handler_target_frame;
+
+static DWORD WINAPI rtl_handler_inner(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)frame; (void)disp;
+    if (((DWORD *)rec)[1] & 2) { /* EXCEPTION_UNWINDING */
+        rtl_handler_inner_unwound = 1;
+        /* The capture was taken with the three saved registers already pushed,
+         * which is the stack the resume point expects. */
+        ctx->eip = rtl_handler_eip;
+        ctx->esp = rtl_handler_esp;
+        return 0; /* ExceptionContinueExecution */
+    }
+    return 1; /* ExceptionContinueSearch */
+}
+
+static DWORD WINAPI rtl_handler_target(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)frame; (void)ctx; (void)disp;
+    rtl_handler_target_calls++;
+    if (((DWORD *)rec)[1] & 2) {
+        return 1;
+    }
+    RtlUnwind(&rtl_handler_target_frame, 0, rec, 0);
+    /* Only reached if the unwind came back instead of continuing in a frame. */
+    rtl_handler_returned = 1;
+    return 1;
+}
+
+static void rtl_unwind_into_handler(void) {
+    DWORD old_head;
+    rtl_handler_inner_unwound = rtl_handler_resumed = rtl_handler_returned = 0;
+    rtl_handler_target_calls = 0;
+
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(old_head));
+    rtl_handler_target_frame.next    = old_head;
+    rtl_handler_target_frame.handler = (DWORD)(ULONG_PTR)&rtl_handler_target;
+    rtl_handler_inner_frame.next     = (DWORD)(ULONG_PTR)&rtl_handler_target_frame;
+    rtl_handler_inner_frame.handler  = (DWORD)(ULONG_PTR)&rtl_handler_inner;
+    __asm__ volatile("mov %0, %%fs:0" :: "r"((DWORD)(ULONG_PTR)&rtl_handler_inner_frame) : "memory");
+
+    __asm__ volatile(
+        "push %%eax\n\t"
+        "push %%ecx\n\t"
+        "push %%edx\n\t"
+        "mov %%esp, %0\n\t"    /* the stack the resume point expects */
+        "push $0\n\t"          /* lpArguments   */
+        "push $0\n\t"          /* nNumberOfArguments */
+        "push $0\n\t"          /* dwExceptionFlags */
+        "push $0x0EEDFADE\n\t" /* dwExceptionCode */
+        "lea 2f, %%eax\n\t"
+        "mov %%eax, %1\n\t"
+        "call *%4\n\t"
+        "movl $1, %2\n\t"      /* RtlUnwind returned to its caller */
+        "jmp 3f\n\t"
+        "2:\n\t"                 /* the unwind resumed here */
+        "movl $1, %3\n\t"
+        "3:\n\t"
+        "pop %%edx\n\t"
+        "pop %%ecx\n\t"
+        "pop %%eax\n\t"
+        : "=m"(rtl_handler_esp),
+          "=m"(rtl_handler_eip),
+          "=m"(rtl_handler_returned),
+          "=m"(rtl_handler_resumed)
+        : "r"((DWORD)(ULONG_PTR)RaiseException)
+        : "memory", "eax", "ecx", "edx", "cc");
+
+    __asm__ volatile("mov %0, %%fs:0" :: "r"(old_head) : "memory");
+
+    check(rtl_handler_inner_unwound, "RtlUnwind runs the inner frame's cleanup");
+    check(rtl_handler_resumed, "the unwind continues inside the frame's handler");
+    check(!rtl_handler_returned, "RtlUnwind does not return when a handler takes over");
+}
+
 #else /* !__i386__ */
 static void seh(void) {} /* no-op on other architectures */
+static void seh_continue(void) {}
+static void rtl_unwind(void) {}
+static void rtl_unwind_into_handler(void) {}
 #endif
 
 void mainCRTStartup(void) {
@@ -489,6 +737,9 @@ void mainCRTStartup(void) {
     registry();
     time_env_system();
     seh();
+    seh_continue();
+    rtl_unwind();
+    rtl_unwind_into_handler();
     if (!failures) say("ok\n");
     ExitProcess(failures);
 }

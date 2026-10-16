@@ -18,6 +18,10 @@ CFLAGS="-O1 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -Wall -We
 
 for t in "${TARGETS[@]}"; do
   read -r arch triple dlm lm <<<"$t"
+  cflags=$CFLAGS
+  # The interpreter has SSE moves but no SSE floating point, so keep 32-bit
+  # fixtures on x87/integer code the way a pre-SSE compiler would.
+  [ "$arch" = x86 ] && cflags="$cflags -mno-sse -mno-sse2"
   for lib in kernel32 user32 advapi32; do
     if [ "$arch" = x86 ]; then
       # stdcall: keep @N decoration in the import lib, strip it from the DLL name (-k).
@@ -28,7 +32,7 @@ for t in "${TARGETS[@]}"; do
     fi
   done
   for src in hello_console hello_gui exports_dll uses_dll dynload; do
-    clang --target="$triple" $CFLAGS -c "$src.c" -o "$WORK/$src-$arch.obj"
+    clang --target="$triple" $cflags -c "$src.c" -o "$WORK/$src-$arch.obj"
   done
   out="$OUT/$arch"
   mkdir -p "$out"
@@ -46,7 +50,7 @@ for t in "${TARGETS[@]}"; do
   lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
     "$WORK/dynload-$arch.obj" "$WORK/kernel32-$arch.lib" /out:"$out/dynload.exe"
   if [ "$arch" != arm64 ]; then
-    clang --target="$triple" $CFLAGS -c apitest.c -o "$WORK/apitest-$arch.obj"
+    clang --target="$triple" $cflags -c apitest.c -o "$WORK/apitest-$arch.obj"
     lld-link "${common[@]}" /subsystem:console /entry:mainCRTStartup \
       "$WORK/apitest-$arch.obj" "$WORK/kernel32-$arch.lib" "$WORK/user32-$arch.lib" \
       "$WORK/advapi32-$arch.lib" /out:"$out/apitest.exe"
