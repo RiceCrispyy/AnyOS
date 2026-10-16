@@ -43,8 +43,9 @@ impl SyscallDispatcher {
         // Read from stdin and copy to guest buffer
         // This is a stub that handles the pattern match properly
         match io::stdin().read(&mut [0u8; 1]) {
-            Ok(_n) => Ok(0),
-            Err(_e) => Ok(0),
+            Ok(0) => Ok(0),  // EOF
+            Ok(_) => Ok(1),  // Read 1 or more bytes
+            Err(_) => Ok(0), // Error, return 0
         }
     }
 
