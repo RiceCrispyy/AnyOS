@@ -352,21 +352,23 @@ fn split_components(path: &str) -> Option<Vec<&str>> {
 }
 
 fn match_case(dir: &Path, name: &str) -> PathBuf {
-    let exact = dir.join(name);
-    if exact.exists() {
-        return exact;
-    }
+    let mut best: Option<PathBuf> = None;
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
-            if e.file_name()
+            let ename = e.file_name();
+            if ename
                 .to_str()
                 .is_some_and(|n| n.eq_ignore_ascii_case(name))
             {
-                return e.path();
+                // Exact on-disk case: return e.path() (which holds the
+                // directory's true case), not dir.join(name) which may be
+                // the user-supplied case.
+                best = Some(e.path());
+                break;
             }
         }
     }
-    exact
+    best.unwrap_or(dir.join(name))
 }
 
 fn default_user() -> String {

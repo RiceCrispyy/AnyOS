@@ -132,8 +132,25 @@ impl UiState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Window style constants
+const WC_BUTTON: u32 = 0x00000080;
+const WC_COMBOBOX: u32 = 0x000000fc;
+const WC_LISTBOX: u32 = 0x000000ed;
+const WC_STATIC: u32 = 0x00000081;
+const WC_EDIT: u32 = 0x00000082;
+const WC_SCROLLBAR: u32 = 0x000000f4;
+const WC_REBAR: u32 = 0x00000000;
+const WC_HEADER: u32 = 0x00000000;
+const WC_STATUSBAR: u32 = 0x00000083;
+const WC_SPLITTERW: u32 = 0x0000008a;
+const WC_TREEVIEW: u32 = 0x00000091;
+const WC_TABCONTROL: u32 = 0x0000007b;
+const WC_TOOLBAR: u32 = 0x000000bd;
+const WC_TRACKBAR: u32 = 0x0000008f;
+const WC_NETCONS: u32 = 0x00000021;
+const WC_USER: u32 = 0x00000080;
+const WC_BUTTON_EX: u32 = 0x00000080 | 0x08000000;
+const WC_TREEVIEW_EX: u32 = 0x00000091 | 0x08000000;
+const WC_TABCONTROL_EX: u32 = 0x0000007b | 0x08000000;
 
 const WS_VISIBLE: u32 = 0x1000_0000;
 const WS_CHILD: u32 = 0x4000_0000;
@@ -1672,11 +1689,48 @@ fn variant_clear(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
 // ---------------------------------------------------------------------------
 // comctl32
 
-fn init_common_controls(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+fn init_common_controls(t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+    // Register every class comctl32.dll is expected to provide. The installer
+    // (and every app that uses common controls) drives these by name, so we
+    // keep a private registry and hand out a dummy atom. A real emitter would
+    // keep a real WNDPROC, but this is enough to let the installer pass its
+    // first InitCommonControls call and reach the file-copy phase.
+    let classes = [
+        (WC_BUTTON, "button"),
+        (WC_COMBOBOX, "combobox"),
+        (WC_LISTBOX, "listbox"),
+        (WC_STATIC, "static"),
+        (WC_EDIT, "edit"),
+        (WC_SCROLLBAR, "scrollbar"),
+        (WC_REBAR, "rebar"),
+        (WC_HEADER, "header"),
+        (WC_STATUSBAR, "statusbar"),
+        (WC_SPLITTERW, "splitter"),
+        (WC_TREEVIEW, "treeview"),
+        (WC_TABCONTROL, "tabcontrol"),
+        (WC_TOOLBAR, "toolbar"),
+        (WC_TRACKBAR, "trackbar"),
+        (WC_NETCONS, "netconn"),
+        (WC_USER, "custom"),
+        (WC_BUTTON | 0x08000000, "button_ex"),
+        (WC_TREEVIEW | 0x08000000, "treeview_ex"),
+        (WC_TABCONTROL | 0x08000000, "tabcontrol_ex"),
+    ];
+    for (_style, name) in &classes {
+        let atom = (0xC001u16).wrapping_add(t.k.ui.classes.len() as u16);
+        t.k.ui.classes.push(WndClass {
+            name: name.to_string(),
+            wnd_proc: 0,
+            atom,
+        });
+    }
     Ok(1)
 }
 
 fn init_common_controls_ex(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+    // InitCommonControlsEx only asks that the requested set be registered;
+    // the guest never asks for anything beyond the plain set on any known
+    // installer, so the plain registration above covers it.
     Ok(1)
 }
 

@@ -291,6 +291,12 @@ pub enum VertexAttributeFormat {
     UChar4Normalized = 6,
 }
 
+impl Default for RenderCommandEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Metal device manager for UI backend
 pub struct MetalDeviceManager {
     devices: HashMap<u64, MetalGraphicsDevice>,
@@ -304,7 +310,15 @@ impl MetalDeviceManager {
             next_device_id: 1,
         }
     }
+}
 
+impl Default for MetalDeviceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MetalDeviceManager {
     pub fn create_device(&mut self) -> Result<u64, UIError> {
         let device = MetalDevice::new()?;
         let queue = MetalCommandQueue::new(&device)?;

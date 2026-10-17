@@ -484,14 +484,12 @@ fn set_value(
     0
 }
 
-fn set_value_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let Some(path) = key_path(t, a[0]) else {
-        return Ok(ERROR_INVALID_HANDLE as u64);
+fn set_key_value(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let path = match sub_path(t, a[0], a[1], wide) {
+        Ok(p) => p,
+        Err(e) => return Ok(e as u64),
     };
-    if is_root(&path) {
-        return Ok(ERROR_ACCESS_DENIED as u64);
-    }
-    let name = match value_name(t, a[1], wide) {
+    let name = match value_name(t, a[2], wide) {
         Ok(n) => n,
         Err(e) => return Ok(e as u64),
     };
@@ -506,12 +504,12 @@ fn set_value_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Ha
     ))
 }
 
-fn set_key_value(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let path = match sub_path(t, a[0], a[1], wide) {
-        Ok(p) => p,
-        Err(e) => return Ok(e as u64),
+/// RegSetValueEx: a value in a key, with its type and size.
+fn set_value_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    let Some(path) = key_path(t, a[0]) else {
+        return Ok(ERROR_INVALID_HANDLE as u64);
     };
-    let name = match value_name(t, a[2], wide) {
+    let name = match value_name(t, a[1], wide) {
         Ok(n) => n,
         Err(e) => return Ok(e as u64),
     };
@@ -609,7 +607,6 @@ fn return_name(t: &mut Thread<'_, '_>, name: &str, buf: u64, len_ptr: u64, wide:
     write_u32(t, len_ptr, len);
     0
 }
-
 fn enum_key_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let Some(path) = key_path(t, a[0]) else {
         return Ok(ERROR_INVALID_HANDLE as u64);
