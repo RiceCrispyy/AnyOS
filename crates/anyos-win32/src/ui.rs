@@ -10,6 +10,7 @@
 use crate::api::*;
 use crate::thread::{Halt, Thread};
 use anyos_ui::{MessageType, WindowParams};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -1280,20 +1281,35 @@ fn get_cursor_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     Ok(1)
 }
 
-fn key_state(t: &Thread<'_, '_>) -> &[u8] {
+fn key_state(t: &Thread<'_, '_>) -> &'static [u8] {
     static KEY_STATE: OnceLock<[u8; 256]> = OnceLock::new();
     KEY_STATE.get_or_init(|| [1; 256])
 }
 
-fn get_async_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
+const WM_CHAR: u32 = 0x0102;
+
+fn get_async_key_state(t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
     Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
 }
 
-fn get_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+fn get_key_state(t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
     Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
 }
 
-fn translate_message(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+fn read_msg(t: &Thread<'_, '_>, ptr: u64) -> Msg {
+    let m = Msg {
+        hwnd: read_ptr(t, ptr).unwrap_or(0),
+        message: read_u32(t, ptr + 8).unwrap_or(0),
+        wparam: read_ptr(t, ptr + 16).unwrap_or(0),
+        lparam: read_ptr(t, ptr + 24).unwrap_or(0),
+        time: read_u32(t, ptr + 32).unwrap_or(0),
+    };
+    m
+}
+
+fn translate_message(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let m = read_msg(t, a[0]);
     if m.message == WM_KEYDOWN || m.message == WM_KEYUP || m.message == WM_CHAR {
         t.k.ui.queue.push_back(m);
