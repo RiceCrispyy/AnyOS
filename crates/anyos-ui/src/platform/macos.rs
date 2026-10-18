@@ -8,6 +8,7 @@
 #![allow(unexpected_cfgs)]
 // Dialog/window state is scaffolding until the Phase 3/4 rendering work lands.
 #![allow(dead_code)]
+use objc2_app_kit::NSWindowStyleMask;
 
 use crate::{
     graphics::{Color, Rect},
@@ -16,12 +17,10 @@ use crate::{
     },
     UIBackend, UIError, UIResult,
 };
-use cocoa::appkit::NSWindowStyleMask;
-use cocoa::foundation::{NSPoint, NSRect, NSSize};
 use core_graphics::context::CGContext;
-use objc::runtime::Object;
-use objc::{class, msg_send, sel, sel_impl};
-use objc_foundation::{INSString, NSString};
+use objc2::runtime::Object;
+use objc2::{class, msg_send, sel};
+use objc2_foundation::{NSString, NSPoint, NSRect, NSSize};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -87,7 +86,7 @@ impl Default for DrawingState {
 struct DialogState {
     handle: WindowHandle,
     result: Option<i32>,
-    ns_window: *mut Object,
+    ns_window: *mut objc2::runtime::AnyObject,
     controls: HashMap<u32, DialogControlState>,
 }
 
@@ -100,7 +99,7 @@ struct DialogControlState {
     id: u32,
     control_type: ControlType,
     value: String,
-    ns_view: Option<*mut Object>,
+    ns_view: Option<*mut objc2::runtime::AnyObject>,
 }
 
 unsafe impl Send for DialogControlState {}
@@ -122,7 +121,7 @@ struct MacOSWindow {
     class: String,
     visible: bool,
     rect: Rect,
-    ns_window: Option<*mut Object>,
+    ns_window: Option<*mut objc2::runtime::AnyObject>,
 }
 
 // Raw pointers to Cocoa objects are not Send/Sync by default,
@@ -157,8 +156,10 @@ impl Drop for MacOSWindow {
 impl MacOSBackend {
     pub fn new() -> UIResult<Self> {
         // Initialize Cocoa autorelease pool
+        // This is only safe to call on macOS; on other platforms the
+        // MacOSBackend is not reachable due to #[cfg(target_os = "macos")].
         unsafe {
-            let _pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+            let _pool: *mut objc2::runtime::AnyObject = msg_send![class!(NSAutoreleasePool), new];
             let _ = _pool;
         }
 
@@ -189,7 +190,7 @@ impl MacOSBackend {
         title: &str,
         rect: Rect,
         style_mask: NSWindowStyleMask,
-    ) -> UIResult<*mut Object> {
+    ) -> UIResult<*mut objc2::runtime::AnyObject> {
         unsafe {
             // Create NSRect from our Rect
             let ns_rect = NSRect::new(
@@ -198,7 +199,7 @@ impl MacOSBackend {
             );
 
             // Allocate NSWindow
-            let window: *mut Object = msg_send![class!(NSWindow), alloc];
+            let window: *mut objc2::runtime::AnyObject = msg_send![class!(NSWindow), alloc];
             if window.is_null() {
                 return Err(UIError::WindowCreationFailed(
                     "Failed to allocate NSWindow".to_string(),
@@ -206,11 +207,11 @@ impl MacOSBackend {
             }
 
             // Initialize with content rect, style mask, backing, and defer
-            let window: *mut Object = msg_send![
+            let window: *mut objc2::runtime::AnyObject = msg_send![
                 window,
-                initWithContentRect: ns_rect
-                styleMask: style_mask
-                backing: 1u64  // NSBackingStoreBuffered
+                initWithContentRect: ns_rect,
+                styleMask: style_mask,
+                backing: 1u64,  // NSBackingStoreBuffered
                 defer: false
             ];
 
@@ -222,10 +223,10 @@ impl MacOSBackend {
 
             // Set window title
             let ns_title = NSString::from_str(title);
-            let _: () = msg_send![window, setTitle: ns_title];
+            let _: () = msg_send![window, setTitle: &*ns_title];
 
             // Make window key and order to front
-            let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<Object>()];
+            let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
 
             Ok(window)
         }
@@ -235,7 +236,7 @@ impl MacOSBackend {
     fn create_dialog_controls(
         &mut self,
         _handle: WindowHandle,
-        ns_window: *mut Object,
+        ns_window: *mut objc2::runtime::AnyObject,
         template: &DialogTemplate,
     ) -> UIResult<HashMap<u32, DialogControlState>> {
         let mut controls = HashMap::new();
@@ -245,7 +246,7 @@ impl MacOSBackend {
                 match control.control_type {
                     ControlType::Button => {
                         // Create NSButton
-                        let button: *mut Object = msg_send![class!(NSButton), alloc];
+                        let button: *mut objc2::runtime::AnyObject = msg_send![class!(NSButton), alloc];
                         if !button.is_null() {
                             let button_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -254,20 +255,20 @@ impl MacOSBackend {
                                     control.rect.height() as f64,
                                 ),
                             );
-                            let button: *mut Object = msg_send![
+                            let button: *mut objc2::runtime::AnyObject = msg_send![
                                 button,
                                 initWithFrame: button_rect
                             ];
 
                             // Set button title
                             let ns_title = NSString::from_str(&control.title);
-                            let _: () = msg_send![button, setTitle: ns_title];
+                            let _: () = msg_send![button, setTitle: &*ns_title];
 
                             // Set button type (push button)
                             let _: () = msg_send![button, setButtonType: 1i64]; // NSMomentaryLightButton
 
                             // Add button to window's content view
-                            let content_view: *mut Object = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: button];
 
                             controls.insert(
@@ -283,7 +284,7 @@ impl MacOSBackend {
                     }
                     ControlType::Static => {
                         // Create NSTextField (read-only for static text)
-                        let text_field: *mut Object = msg_send![class!(NSTextField), alloc];
+                        let text_field: *mut objc2::runtime::AnyObject = msg_send![class!(NSTextField), alloc];
                         if !text_field.is_null() {
                             let field_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -292,20 +293,20 @@ impl MacOSBackend {
                                     control.rect.height() as f64,
                                 ),
                             );
-                            let text_field: *mut Object = msg_send![
+                            let text_field: *mut objc2::runtime::AnyObject = msg_send![
                                 text_field,
                                 initWithFrame: field_rect
                             ];
 
                             // Set text
                             let ns_text = NSString::from_str(&control.title);
-                            let _: () = msg_send![text_field, setStringValue: ns_text];
+                            let _: () = msg_send![text_field, setStringValue: &*ns_text];
 
                             // Make it non-editable
                             let _: () = msg_send![text_field, setEditable: false];
 
                             // Add to window
-                            let content_view: *mut Object = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: text_field];
 
                             controls.insert(
@@ -321,7 +322,7 @@ impl MacOSBackend {
                     }
                     ControlType::Edit => {
                         // Create NSTextField (editable for edit control)
-                        let text_field: *mut Object = msg_send![class!(NSTextField), alloc];
+                        let text_field: *mut objc2::runtime::AnyObject = msg_send![class!(NSTextField), alloc];
                         if !text_field.is_null() {
                             let field_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -330,7 +331,7 @@ impl MacOSBackend {
                                     control.rect.height() as f64,
                                 ),
                             );
-                            let text_field: *mut Object = msg_send![
+                            let text_field: *mut objc2::runtime::AnyObject = msg_send![
                                 text_field,
                                 initWithFrame: field_rect
                             ];
@@ -339,7 +340,7 @@ impl MacOSBackend {
                             let _: () = msg_send![text_field, setEditable: true];
 
                             // Add to window
-                            let content_view: *mut Object = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: text_field];
 
                             controls.insert(
@@ -392,10 +393,8 @@ impl UIBackend for MacOSBackend {
         let visible = (params.style & 0x10000000) != 0; // WS_VISIBLE
 
         // Build NSWindowStyleMask from Windows style flags
-        let style_mask = NSWindowStyleMask::NSTitledWindowMask
-            | NSWindowStyleMask::NSClosableWindowMask
-            | NSWindowStyleMask::NSMiniaturizableWindowMask
-            | NSWindowStyleMask::NSResizableWindowMask;
+        // NSWindowStyleMask is a newtype around NSUInteger (u32/64-bit)
+        let style_mask = NSWindowStyleMask(0x10000000 | 0x2000000 | 0x8000000 | 0x4000000);
 
         // Create native NSWindow
         let ns_window = self.create_ns_window(&params.title, params.rect, style_mask)?;
@@ -413,7 +412,7 @@ impl UIBackend for MacOSBackend {
         // Show window if WS_VISIBLE is set
         if visible {
             unsafe {
-                let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<Object>()];
+                let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
             }
         }
 
@@ -578,7 +577,7 @@ impl UIBackend for MacOSBackend {
         if let Some(ns_window) = window.ns_window {
             unsafe {
                 let ns_title = NSString::from_str(title);
-                let _: () = msg_send![ns_window, setTitle: ns_title];
+                let _: () = msg_send![ns_window, setTitle: &*ns_title];
             }
         }
 
@@ -597,9 +596,9 @@ impl UIBackend for MacOSBackend {
         if let Some(ns_window) = window.ns_window {
             unsafe {
                 if visible {
-                    let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<Object>()];
+                    let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
                 } else {
-                    let _: () = msg_send![ns_window, orderOut: std::ptr::null_mut::<Object>()];
+                    let _: () = msg_send![ns_window, orderOut: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
                 }
             }
         }
@@ -631,7 +630,7 @@ impl UIBackend for MacOSBackend {
                     NSPoint::new(rect.left as f64, rect.top as f64),
                     NSSize::new(rect.width() as f64, rect.height() as f64),
                 );
-                let _: () = msg_send![ns_window, setFrame: ns_rect display: true];
+                let _: () = msg_send![ns_window, setFrame: ns_rect, display: true];
             }
         }
 
@@ -648,7 +647,7 @@ impl UIBackend for MacOSBackend {
 
         // Build NSWindowStyleMask for dialog (no minimize/maximize)
         let style_mask =
-            NSWindowStyleMask::NSTitledWindowMask | NSWindowStyleMask::NSClosableWindowMask;
+            NSWindowStyleMask::Titled | NSWindowStyleMask::Closable;
 
         // Create native NSWindow for dialog
         let ns_window = self.create_ns_window(&template.title, template.rect, style_mask)?;
@@ -673,7 +672,7 @@ impl UIBackend for MacOSBackend {
         // For now, simulate a simple dialog interaction
         unsafe {
             // Make the window modal and visible
-            let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null_mut::<Object>()];
+            let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
         }
 
         // Return dialog result (0 for now, would be set by EndDialog)
@@ -689,10 +688,10 @@ impl UIBackend for MacOSBackend {
         let handle = self.next_handle();
 
         // Build NSWindowStyleMask for dialog
-        let style_mask = NSWindowStyleMask::NSTitledWindowMask
-            | NSWindowStyleMask::NSClosableWindowMask
-            | NSWindowStyleMask::NSMiniaturizableWindowMask
-            | NSWindowStyleMask::NSResizableWindowMask;
+        let style_mask = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable
+            | NSWindowStyleMask::Resizable;
 
         // Create native NSWindow for dialog
         let ns_window = self.create_ns_window(&template.title, template.rect, style_mask)?;
@@ -715,7 +714,7 @@ impl UIBackend for MacOSBackend {
 
         unsafe {
             // Make dialog visible
-            let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<Object>()];
+            let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
         }
 
         Ok(handle)
@@ -842,6 +841,7 @@ impl MacOSBackend {
 }
 
 #[cfg(test)]
+#[cfg(target_os = "macos")]
 mod tests {
     use super::*;
 
