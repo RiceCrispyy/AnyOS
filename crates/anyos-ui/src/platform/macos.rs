@@ -20,7 +20,7 @@ use crate::{
 use core_graphics::context::CGContext;
 use objc2::runtime::Object;
 use objc2::{class, msg_send, sel};
-use objc2_foundation::{NSString, NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -246,7 +246,8 @@ impl MacOSBackend {
                 match control.control_type {
                     ControlType::Button => {
                         // Create NSButton
-                        let button: *mut objc2::runtime::AnyObject = msg_send![class!(NSButton), alloc];
+                        let button: *mut objc2::runtime::AnyObject =
+                            msg_send![class!(NSButton), alloc];
                         if !button.is_null() {
                             let button_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -268,7 +269,8 @@ impl MacOSBackend {
                             let _: () = msg_send![button, setButtonType: 1i64]; // NSMomentaryLightButton
 
                             // Add button to window's content view
-                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject =
+                                msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: button];
 
                             controls.insert(
@@ -284,7 +286,8 @@ impl MacOSBackend {
                     }
                     ControlType::Static => {
                         // Create NSTextField (read-only for static text)
-                        let text_field: *mut objc2::runtime::AnyObject = msg_send![class!(NSTextField), alloc];
+                        let text_field: *mut objc2::runtime::AnyObject =
+                            msg_send![class!(NSTextField), alloc];
                         if !text_field.is_null() {
                             let field_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -306,7 +309,8 @@ impl MacOSBackend {
                             let _: () = msg_send![text_field, setEditable: false];
 
                             // Add to window
-                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject =
+                                msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: text_field];
 
                             controls.insert(
@@ -322,7 +326,8 @@ impl MacOSBackend {
                     }
                     ControlType::Edit => {
                         // Create NSTextField (editable for edit control)
-                        let text_field: *mut objc2::runtime::AnyObject = msg_send![class!(NSTextField), alloc];
+                        let text_field: *mut objc2::runtime::AnyObject =
+                            msg_send![class!(NSTextField), alloc];
                         if !text_field.is_null() {
                             let field_rect = NSRect::new(
                                 NSPoint::new(control.rect.left as f64, control.rect.top as f64),
@@ -340,7 +345,8 @@ impl MacOSBackend {
                             let _: () = msg_send![text_field, setEditable: true];
 
                             // Add to window
-                            let content_view: *mut objc2::runtime::AnyObject = msg_send![ns_window, contentView];
+                            let content_view: *mut objc2::runtime::AnyObject =
+                                msg_send![ns_window, contentView];
                             let _: () = msg_send![content_view, addSubview: text_field];
 
                             controls.insert(
@@ -646,8 +652,7 @@ impl UIBackend for MacOSBackend {
         let handle = self.next_handle();
 
         // Build NSWindowStyleMask for dialog (no minimize/maximize)
-        let style_mask =
-            NSWindowStyleMask::Titled | NSWindowStyleMask::Closable;
+        let style_mask = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable;
 
         // Create native NSWindow for dialog
         let ns_window = self.create_ns_window(&template.title, template.rect, style_mask)?;
@@ -714,7 +719,8 @@ impl UIBackend for MacOSBackend {
 
         unsafe {
             // Make dialog visible
-            let _: () = msg_send![ns_window, orderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+            let _: () =
+                msg_send![ns_window, orderFront: std::ptr::null_mut::<objc2::runtime::AnyObject>()];
         }
 
         Ok(handle)
