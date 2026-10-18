@@ -246,7 +246,7 @@ fn load_library(t: &mut Thread<'_, '_>, ptr: u64, flags: u64, wide: bool) -> Res
     if let Some(m) = by_name(t, &file) {
         return Ok(handle_of(t, &m));
     }
-    if classify(&file).is_system() {
+    if classify(&file).is_system() || system_dll_present(t, &file) {
         return system_module(t, &file);
     }
 
