@@ -1280,15 +1280,24 @@ fn get_cursor_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     Ok(1)
 }
 
+fn key_state(t: &Thread<'_, '_>) -> &[u8] {
+    static KEY_STATE: OnceLock<[u8; 256]> = OnceLock::new();
+    KEY_STATE.get_or_init(|| [1; 256])
+}
+
 fn get_async_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
-    Ok(0) // key not pressed
+    Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
 }
 
 fn get_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
-    Ok(0)
+    Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
 }
 
-fn translate_message(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+fn translate_message(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let m = read_msg(t, a[0]);
+    if m.message == WM_KEYDOWN || m.message == WM_KEYUP || m.message == WM_CHAR {
+        t.k.ui.queue.push_back(m);
+    }
     Ok(1)
 }
 
