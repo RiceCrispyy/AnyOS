@@ -96,7 +96,6 @@ impl VertexShaderConstants {
         Ok(())
     }
 
-
     pub fn set_vector(&mut self, index: usize, values: &[f32]) -> D3DResult<()> {
         if index + values.len() > self.data.len() {
             return Err(D3DError::StateError(
@@ -139,17 +138,6 @@ pub struct PixelShaderConstants {
 }
 
 impl PixelShaderConstants {
-    pub fn set_vector(&mut self, index: usize, values: &[f32]) -> D3DResult<()> {
-        if index + values.len() > self.data.len() {
-            return Err(D3DError::StateError(
-                "Vector write exceeds buffer".to_string(),
-            ));
-        }
-        self.data[index..index + values.len()].copy_from_slice(values);
-        self.dirty = true;
-        Ok(())
-    }
-
     pub fn new(size_floats: usize) -> Self {
         Self {
             data: vec![0.0f32; size_floats],
@@ -290,4 +278,3 @@ mod tests {
         assert_eq!(consts.data[5], 1.0);
     }
 }
-
