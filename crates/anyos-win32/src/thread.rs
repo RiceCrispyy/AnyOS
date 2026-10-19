@@ -40,6 +40,11 @@ pub(crate) enum Halt {
     /// The API call has to wait: run other threads, then call it again.
     Block,
     Error(RunError),
+    /// The API has already set `ctx` to the desired execution state (e.g.
+    /// after a successful SEH `ExceptionContinueExecution`). The dispatcher
+    /// must skip its normal `ret()` path and resume execution directly from
+    /// `ctx.rip`.
+    DirectResume,
 }
 
 impl From<RunError> for Halt {
@@ -415,6 +420,10 @@ impl<'a, 'b> Thread<'a, 'b> {
                 detail: "a wait could not be resumed".into(),
             }),
             Err(Halt::Error(e)) => Err(e),
+            // DirectResume is handled inside call_from; it should not bubble here.
+            Err(Halt::DirectResume) => Err(RunError::Deadlock {
+                detail: "DirectResume reached the top-level run loop unexpectedly".into(),
+            }),
         };
         crate::file::shutdown(self);
         crate::registry::shutdown(self);
@@ -597,7 +606,7 @@ impl<'a, 'b> Thread<'a, 'b> {
                         .into());
                     };
                     match self.dispatch(&entry.dll, &entry.symbol) {
-                        Ok(()) => {
+                        Ok(()) | Err(Halt::DirectResume) => {
                             if self.yield_now && scheduler {
                                 self.yield_now = false;
                                 self.schedule()?;
@@ -868,6 +877,22 @@ impl<'a, 'b> Thread<'a, 'b> {
             self.api_calls -= 1;
             return Err(Halt::Block);
         }
+        if matches!(result, Err(Halt::DirectResume)) {
+            // The API restored ctx directly (e.g. SEH ExceptionContinueExecution).
+            // Skip ret() entirely; execution resumes from ctx.rip.
+            if self.trace {
+                let shown: Vec<String> = args.iter().map(|a| format!("{a:#x}")).collect();
+                let _ = writeln!(
+                    self.stdio.stderr,
+                    "[anyos] {}!{}({}) -> resume@{:#x}",
+                    dll,
+                    api.name,
+                    shown.join(", "),
+                    self.ctx.rip,
+                );
+            }
+            return Err(Halt::DirectResume);
+        }
         self.threads[self.current].wait_started = None;
         if self.trace {
             let shown: Vec<String> = args.iter().map(|a| format!("{a:#x}")).collect();
@@ -876,7 +901,7 @@ impl<'a, 'b> Thread<'a, 'b> {
                 Err(Halt::Exit(code)) => format!("exit {code}"),
                 Err(Halt::ExitThread(code)) => format!("thread exit {code}"),
                 Err(Halt::Block) => "wait".into(),
-                Err(Halt::Error(_)) => "error".into(),
+                Err(Halt::Error(_)) | Err(Halt::DirectResume) => "error".into(),
             };
             let _ = writeln!(
                 self.stdio.stderr,

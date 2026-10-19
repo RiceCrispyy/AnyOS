@@ -746,6 +746,13 @@ pub(crate) static APIS: &[Api] = &[
     k32("lstrcpyn", 3, |t, a| lstrcpyn(t, a, false)),
     k32("lstrcat", 2, |t, a| lstrcat(t, a, false)),
     k32("lstrlen", 1, |t, a| lstrlen(t, a, false)),
+    // wsprintfA/W are documented as user32 but shipped in kernel32 too.
+    cdecl("kernel32", "wsprintfA", 2, |t, a| {
+        wsprintf(t, a, false, Args::Stack(2))
+    }),
+    cdecl("kernel32", "wsprintfW", 2, |t, a| {
+        wsprintf(t, a, true, Args::Stack(2))
+    }),
 ];
 
 pub(crate) static USER32: &[Api] = &[

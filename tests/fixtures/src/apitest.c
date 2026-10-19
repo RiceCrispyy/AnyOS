@@ -366,6 +366,119 @@ static void time_env_system(void) {
     check(n == 18 && !lstrcmpA(buf, "disk has 7 files\r\n"), "FormatMessageA inserts");
 }
 
+/* ---- structured exception handling (SEH) --------------------------------
+ * Verify that RaiseException walks the x86 SEH chain (FS:[0]).
+ *
+ * We install a handler that:
+ *   1. Records it was called.
+ *   2. Modifies the CONTEXT's EIP to skip past the RaiseException call.
+ *   3. Returns ExceptionContinueExecution (0).
+ *
+ * Exception code 0x0EEDFADE is the code Delphi / Inno Setup uses.
+ *
+ * Only compiled for x86 (i386) because the chain is FS:[0]-based; x64 uses
+ * table-driven unwind which AnyOS handles separately.
+ */
+
+#if defined(__i386__)
+
+static volatile int seh_handler_called;
+static volatile DWORD seh_resume_eip; /* set before the raise */
+
+/* Minimal x86 CONTEXT overlay (only the fields we need). */
+typedef struct {
+    DWORD flags;           /* +0x00 */
+    DWORD dr[6];           /* +0x04 */
+    BYTE  float_save[112]; /* +0x1C */
+    DWORD seg_gs;          /* +0x8C */
+    DWORD seg_fs;          /* +0x90 */
+    DWORD seg_es;          /* +0x94 */
+    DWORD seg_ds;          /* +0x98 */
+    DWORD edi;             /* +0x9C */
+    DWORD esi;             /* +0xA0 */
+    DWORD ebx;             /* +0xA4 */
+    DWORD edx;             /* +0xA8 */
+    DWORD ecx;             /* +0xAC */
+    DWORD eax;             /* +0xB0 */
+    DWORD ebp;             /* +0xB4 */
+    DWORD eip;             /* +0xB8 */
+    DWORD seg_cs;          /* +0xBC */
+    DWORD eflags;          /* +0xC0 */
+    DWORD esp;             /* +0xC4 */
+    DWORD seg_ss;          /* +0xC8 */
+} SEH_CONTEXT;
+
+/* SEH registration record: { next, handler }. */
+typedef struct {
+    DWORD next;
+    DWORD handler;
+} SEH_FRAME;
+
+/* The handler itself: called with the 4-arg Windows SEH calling convention.
+ * We use __attribute__((regparm(0))) / plain stdcall push-args model. */
+static DWORD WINAPI seh_handler(
+    void        *rec,
+    SEH_FRAME   *frame,
+    SEH_CONTEXT *ctx,
+    void        *disp)
+{
+    (void)rec; (void)frame; (void)disp;
+    seh_handler_called = 1;
+    /* Redirect to just after the RaiseException call. */
+    ctx->eip = seh_resume_eip;
+    return 0; /* ExceptionContinueExecution */
+}
+
+static void seh(void) {
+    SEH_FRAME frame;
+    seh_handler_called = 0;
+
+    /* Save FS:[0] and install our frame. */
+    DWORD old_head;
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(old_head));
+    frame.next    = old_head;
+    frame.handler = (DWORD)(ULONG_PTR)&seh_handler;
+    __asm__ volatile("mov %0, %%fs:0" :: "r"((DWORD)(ULONG_PTR)&frame) : "memory");
+
+    /* Capture the resume address (right after RaiseException) using a
+     * call/pop pair placed immediately after the RaiseException call in the
+     * same asm block. */
+    __asm__ volatile(
+        /* Save EAX/ECX/EDX (cdecl caller-saved) so we can use them. */
+        "push %%eax\n\t"
+        "push %%ecx\n\t"
+        "push %%edx\n\t"
+        /* Push RaiseException args: info=0, nparams=0, flags=0, code=0x0EEDFADE */
+        "push $0\n\t"          /* lpArguments   */
+        "push $0\n\t"          /* nNumberOfArguments */
+        "push $0\n\t"          /* dwExceptionFlags */
+        "push $0x0EEDFADE\n\t" /* dwExceptionCode */
+        /* Load the address of the label just after the call into seh_resume_eip. */
+        "lea 1f, %%eax\n\t"
+        "mov %%eax, %0\n\t"
+        /* Call RaiseException via the import thunk. */
+        "call *%1\n\t"
+        /* Handler resumes here (ExceptionContinueExecution). */
+        "1:\n\t"
+        /* Restore. */
+        "pop %%edx\n\t"
+        "pop %%ecx\n\t"
+        "pop %%eax\n\t"
+        : "=m"(seh_resume_eip)
+        : "r"((DWORD)(ULONG_PTR)RaiseException) /* call-gate address in a register */
+        : "memory", "eax", "ecx", "edx", "cc"
+    );
+
+    /* Restore original SEH head. */
+    __asm__ volatile("mov %0, %%fs:0" :: "r"(old_head) : "memory");
+
+    check(seh_handler_called, "SEH ExceptionContinueExecution (Delphi 0x0EEDFADE)");
+}
+
+#else /* !__i386__ */
+static void seh(void) {} /* no-op on other architectures */
+#endif
+
 void mainCRTStartup(void) {
     out = GetStdHandle(STD_OUTPUT_HANDLE);
     heaps();
@@ -375,6 +488,7 @@ void mainCRTStartup(void) {
     strings();
     registry();
     time_env_system();
+    seh();
     if (!failures) say("ok\n");
     ExitProcess(failures);
 }

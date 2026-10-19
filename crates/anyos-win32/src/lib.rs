@@ -27,6 +27,7 @@ mod objects;
 mod process;
 mod registry;
 mod resource;
+mod seh;
 mod strings;
 mod sync;
 mod sysinfo;
