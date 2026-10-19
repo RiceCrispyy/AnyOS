@@ -429,7 +429,24 @@ fn zip_archive_installs_as_portable_app() {
         read(&env, r"C:\Program Files\Game-1.0\data\level1.dat"),
         b"level"
     );
+
+    // The index remembers when and how much was installed, and Windows'
+    // Uninstall key lists the app for programs that look there.
+    let before = anyos_env::clock::unix_now();
+    let app = env.apps().unwrap().find("game-1-0").cloned().unwrap();
+    let at = anyos_env::clock::parse_rfc3339(app.installed_at.as_deref().unwrap()).unwrap();
+    assert!((before - at).abs() < 300, "{:?}", app.installed_at);
+    assert_eq!(app.size_bytes, Some(r.bytes_written));
+    let key = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\AnyOS-game-1-0";
+    let reg = env.registry().unwrap();
+    assert_eq!(
+        reg.get(key, "DisplayName"),
+        Some(&RegValue::Sz("Game-1.0".into()))
+    );
+    assert!(matches!(reg.get(key, "InstallDate"), Some(RegValue::Sz(d)) if d.len() == 8));
+
     uninstall(&env, "game-1-0").unwrap();
+    assert!(!env.registry().unwrap().key_exists(key));
     assert!(!env
         .host_path(r"C:\Program Files\Game-1.0")
         .unwrap()

@@ -9,8 +9,12 @@ publish.workspace = true
 
 [dependencies]
 anyos-backend.workspace = true
+anyos-env.workspace = true
 anyos-interp.workspace = true
 anyos-loader.workspace = true
 anyos-memory.workspace = true
 anyos-pe.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

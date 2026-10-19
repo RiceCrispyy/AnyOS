@@ -133,6 +133,35 @@ impl Registry {
         values.len() != before
     }
 
+    /// Names of the keys directly below `key`, including keys that only exist
+    /// because something deeper does, in sorted order.
+    pub fn subkeys(&self, key: &str) -> Vec<String> {
+        let below = format!("{}\\", normalize_key(key).to_ascii_lowercase());
+        let mut out: Vec<String> = Vec::new();
+        for k in self.keys.keys() {
+            if k.len() <= below.len() || !k.to_ascii_lowercase().starts_with(&below) {
+                continue;
+            }
+            let child = k[below.len()..].split('\\').next().unwrap_or_default();
+            if !child.is_empty() && !out.iter().any(|c| c.eq_ignore_ascii_case(child)) {
+                out.push(child.to_string());
+            }
+        }
+        out
+    }
+
+    /// The values of `key`, in name order.
+    pub fn values(&self, key: &str) -> Vec<(String, RegValue)> {
+        self.find(&normalize_key(key))
+            .map(|k| {
+                self.keys[k]
+                    .iter()
+                    .map(|(n, v)| (n.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn len(&self) -> usize {
         self.keys.len()
     }
@@ -159,6 +188,23 @@ mod hex_u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subkeys_and_values_enumerate() {
+        let mut r = Registry::default();
+        r.set(r"HKCU\Software\A\Deep\Er", "x", RegValue::Dword(1));
+        r.set(r"HKCU\Software\b", "", RegValue::Sz("v".into()));
+        r.set(r"HKCU\Software\b", "n", RegValue::Dword(2));
+        assert_eq!(r.subkeys(r"HKEY_CURRENT_USER\software"), ["A", "b"]);
+        assert_eq!(r.subkeys(r"HKCU\Software\A"), ["Deep"]);
+        assert!(r.subkeys(r"HKCU\Software\b").is_empty());
+        let names: Vec<_> = r
+            .values(r"hkcu\software\B")
+            .into_iter()
+            .map(|v| v.0)
+            .collect();
+        assert_eq!(names, ["", "n"]);
+    }
 
     #[test]
     fn roots_are_normalized() {

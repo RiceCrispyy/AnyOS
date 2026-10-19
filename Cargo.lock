@@ -285,6 +285,7 @@ dependencies = [
 name = "anyos-gui"
 version = "0.1.0"
 dependencies = [
+ "anyos-env",
  "anyos-format",
  "anyos-package",
  "anyos-pe",
@@ -394,10 +395,12 @@ name = "anyos-win32"
 version = "0.1.0"
 dependencies = [
  "anyos-backend",
+ "anyos-env",
  "anyos-interp",
  "anyos-loader",
  "anyos-memory",
  "anyos-pe",
+ "libc",
  "thiserror 2.0.21",
 ]
 

@@ -1,3 +1,5 @@
 LIBRARY user32.dll
 EXPORTS
   MessageBoxA@16
+  wsprintfA
+  wsprintfW

@@ -9,6 +9,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod analysis;
+mod installed;
 mod runner;
 mod updater;
 
@@ -79,6 +80,7 @@ struct AnyosApp {
     job: Option<Job>,
     log: Vec<(Stream, String)>,
     updater: Updater,
+    installed: Vec<installed::InstalledApp>,
 }
 
 impl AnyosApp {
@@ -92,6 +94,7 @@ impl AnyosApp {
             job: None,
             log: Vec::new(),
             updater: Updater::new(),
+            installed: installed::load(),
         }
     }
 
@@ -148,6 +151,8 @@ impl AnyosApp {
                     };
                     self.log.push((Stream::Info, msg));
                     self.job = None;
+                    // An install may have added an app.
+                    self.installed = installed::load();
                     break;
                 }
             }
@@ -194,6 +199,17 @@ impl eframe::App for AnyosApp {
                     {
                         self.pick_file();
                     }
+                    if self.analysis.is_some()
+                        && !self.installed.is_empty()
+                        && ui
+                            .add_enabled(!busy, egui::Button::new("My apps"))
+                            .on_hover_text("Back to the apps you installed")
+                            .clicked()
+                    {
+                        self.analysis = None;
+                        self.log.clear();
+                        self.installed = installed::load();
+                    }
                     let checking = self.updater.busy();
                     if ui
                         .add_enabled(!checking && !busy, egui::Button::new("Check for updates"))
@@ -216,6 +232,13 @@ impl eframe::App for AnyosApp {
             }
             match &self.analysis {
                 None => {
+                    if let Some((p, run)) = self.installed_list(ui) {
+                        self.open(&p);
+                        if run {
+                            self.start(&ctx);
+                        }
+                        return;
+                    }
                     if drop_zone(ui, "Drop a program here, or click to choose one", false).clicked()
                     {
                         self.pick_file();
@@ -237,6 +260,81 @@ impl eframe::App for AnyosApp {
 }
 
 impl AnyosApp {
+    /// The installed apps, newest first, above the drop zone. Returns the
+    /// program picked and whether to run it right away (otherwise it is only
+    /// opened, to show its details first).
+    fn installed_list(&mut self, ui: &mut egui::Ui) -> Option<(PathBuf, bool)> {
+        if self.installed.is_empty() {
+            return None;
+        }
+        let mut picked = None;
+        let can_run = self.cli.is_some();
+        ui.label(RichText::new("Your apps").strong());
+        egui::ScrollArea::vertical()
+            .max_height(ui.available_height() * 0.6)
+            .show(ui, |ui| {
+                for app in &self.installed {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            let title = match &app.version {
+                                Some(v) => format!("{} {v}", app.name),
+                                None => app.name.clone(),
+                            };
+                            ui.label(RichText::new(title).strong());
+                            let detail = match &app.env {
+                                Some(e) => format!("{} · {e}", app.detail),
+                                None => app.detail.clone(),
+                            };
+                            ui.label(RichText::new(detail).weak());
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let main = app.programs.first();
+                            if app.programs.len() > 1 {
+                                ui.add_enabled_ui(can_run, |ui| {
+                                    ui.menu_button("More", |ui| {
+                                        for (label, path) in &app.programs {
+                                            if ui.button(format!("Run {label}")).clicked() {
+                                                picked = Some((path.clone(), true));
+                                                ui.close();
+                                            }
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text("Run another program from this app");
+                                });
+                            }
+                            let details = ui
+                                .add_enabled(main.is_some(), egui::Button::new("Details"))
+                                .on_hover_text(
+                                    "What AnyOS knows about the program, before running it",
+                                );
+                            if details.clicked() {
+                                picked = main.map(|(_, p)| (p.clone(), false));
+                            }
+                            let run = egui::Button::new(RichText::new("▶  Run").strong())
+                                .min_size(egui::vec2(80.0, 26.0));
+                            let hover = match main {
+                                None => "No program was found in this app's folder.".to_string(),
+                                Some(_) if !can_run => {
+                                    "The anyos command-line tool was not found.".to_string()
+                                }
+                                Some((label, _)) => format!("Run {label}"),
+                            };
+                            let r = ui
+                                .add_enabled(main.is_some() && can_run, run)
+                                .on_hover_text(&hover)
+                                .on_disabled_hover_text(&hover);
+                            if r.clicked() {
+                                picked = main.map(|(_, p)| (p.clone(), true));
+                            }
+                        });
+                    });
+                    ui.separator();
+                }
+            });
+        picked
+    }
+
     /// The line under the header about updates, when there is something to say.
     fn update_bar(&mut self, ui: &mut egui::Ui) {
         use updater::State;
@@ -494,7 +592,7 @@ fn describe(cmd: &std::process::Command) -> String {
     s
 }
 
-fn human_size(n: u64) -> String {
+pub(crate) fn human_size(n: u64) -> String {
     match n {
         0..1024 => format!("{n} bytes"),
         1024..1_048_576 => format!("{:.1} KB", n as f64 / 1024.0),
