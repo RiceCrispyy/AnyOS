@@ -11,8 +11,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Universal2 covers Apple Silicon and Intel Macs with one binary.
-  MACOS_TARGETS: aarch64-apple-darwin x86_64-apple-darwin
 
 jobs:
   build-macos:
@@ -25,11 +23,7 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ env.MACOS_TARGETS }}
-
-      - name: Add macOS targets (idempotent)
-        run: |
-          rustup target add ${{ env.MACOS_TARGETS }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Show toolchain
         run: |
@@ -37,55 +31,47 @@ jobs:
           cargo --version
           echo "HOST: $(uname -m)"
 
-      - name: Build anyos for macOS (universal2)
-        run: |
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
-          llvm-lipo -create target/aarch64-apple-darwin/release/anyos target/x86_64-apple-darwin/release/anyos -output target/release/anyos
-          ls -l target/release/anyos
+      - name: Build anyos-cli and anyos-gui (aarch64)
+        run: cargo build --release --locked -p anyos-cli -p anyos-gui --target aarch64-apple-darwin
 
-      - name: Verify universal binary
-        run: |
-          lipo -info target/release/anyos
+      - name: Build anyos-cli and anyos-gui (x86_64)
+        run: cargo build --release --locked -p anyos-cli -p anyos-gui --target x86_64-apple-darwin
 
-      - name: Prepare marshalled universal2 binaries (target dirs kept separate)
+      - name: Create universal2 binaries
         run: |
-          mkdir -p target/macos-aarch64 target/macos-x86_64
-          cp target/aarch64-apple-darwin/release/anyos target/macos-aarch64/
-          cp target/x86_64-apple-darwin/release/anyos target/macos-x86_64/
-          ls -l target/macos-*
+          mkdir -p target/universal2-apple-darwin/release
+          for b in anyos anyos-gui; do
+            lipo -create \
+              target/aarch64-apple-darwin/release/$b \
+              target/x86_64-apple-darwin/release/$b \
+              -output target/universal2-apple-darwin/release/$b
+            lipo -info target/universal2-apple-darwin/release/$b
+          done
 
-      - name: Install SwiftPM (Xcode-free build of the launcher)
+      - name: Assemble AnyOS.app bundle
         run: |
-          # SwiftPM ships with Xcode Command Line Tools on macOS runners.
-          swift --version
+          version="dev-${GITHUB_SHA::7}"
+          app="dist/AnyOS.app/Contents"
+          mkdir -p "$app/MacOS"
+          cp target/universal2-apple-darwin/release/anyos-gui \
+             target/universal2-apple-darwin/release/anyos \
+             "$app/MacOS/"
+          sed "s/@VERSION@/${version}/" apps/anyos-gui/macos/Info.plist > "$app/Info.plist"
+          ls -lR dist/AnyOS.app
 
-      - name: Build the launcher with SwiftPM
+      - name: Verify app bundle
         run: |
-          cd anyos/Launcher
-          swift build -c release
-          cp .build/release/AnyOSLauncher build/AnyOSLauncher.app/Contents/MacOS/
+          [[ -f "dist/AnyOS.app/Contents/MacOS/anyos-gui" ]] || \
+            { echo "::error::AnyOS.app was not assembled correctly"; exit 1; }
+          [[ -f "dist/AnyOS.app/Contents/MacOS/anyos" ]] || \
+            { echo "::error::anyos binary missing from AnyOS.app"; exit 1; }
+          echo "AnyOS.app OK"
+          file dist/AnyOS.app/Contents/MacOS/anyos-gui
+          file dist/AnyOS.app/Contents/MacOS/anyos
 
-      - name: Run the launcher helper (smoke test)
-        run: |
-          ./build/AnyOSLauncher.app/Contents/MacOS/AnyOSLauncher --help
-
-      - name: Bundle the app for the user
-        run: |
-          python3 scripts/bundle_launcher.py
-          ls -laR anyos/Launcher | head -60
-
-      - name: Upload the built app
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      - name: Upload AnyOS.app
         uses: actions/upload-artifact@v4
         with:
-          name: anyos-macos
-          path: anyos/Launcher/AnyOSLauncher.app
+          name: AnyOS-macos-universal
+          path: dist/AnyOS.app
           if-no-files-found: error
-
-      - name: Upload release notes
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          # Side-effect step for packaging; release notes live in
-          # RELEASE_NOTES_0_2_0.md when that file is added.
-          echo "Build artifact ready for release."
