@@ -113,3 +113,13 @@ fn selftest_matches_real_cpu() {
         assert_eq!(out, expected, "{arch}");
     }
 }
+
+/// LoadLibrary, GetProcAddress and friends, checked from inside the guest:
+/// each passing check sets one bit of the exit code (see dynload.c).
+#[test]
+fn run_time_linking_works() {
+    for arch in ["x64", "x86"] {
+        let (r, _, err) = run(arch, "dynload.exe", &RunOptions::default());
+        assert_eq!(r.expect(arch).exit_code, 0x7FF, "{arch}: {err}");
+    }
+}

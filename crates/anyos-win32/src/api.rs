@@ -8,6 +8,7 @@ use std::io::Write;
 
 use anyos_pe::ImportName;
 
+use crate::module::*;
 use crate::thread::{Halt, Thread, PROCESS_ID, THREAD_ID};
 
 type ApiFn = fn(&mut Thread<'_, '_>, &[u64]) -> Result<u64, Halt>;
@@ -41,7 +42,75 @@ static APIS: &[Api] = &[
     api("kernel32", "GetCommandLineW", 0, |t, _| Ok(t.cmdline_w)),
     api("kernel32", "GetModuleHandleA", 1, get_module_handle_a),
     api("kernel32", "GetModuleHandleW", 1, get_module_handle_w),
+    api("kernel32", "GetModuleHandleExA", 3, get_module_handle_ex_a),
+    api("kernel32", "GetModuleHandleExW", 3, get_module_handle_ex_w),
+    api("kernel32", "GetModuleFileNameA", 3, get_module_file_name_a),
+    api("kernel32", "GetModuleFileNameW", 3, get_module_file_name_w),
+    api("kernel32", "LoadLibraryA", 1, load_library_a),
+    api("kernel32", "LoadLibraryW", 1, load_library_w),
+    api("kernel32", "LoadLibraryExA", 3, load_library_ex_a),
+    api("kernel32", "LoadLibraryExW", 3, load_library_ex_w),
+    api("kernel32", "FreeLibrary", 1, free_library),
+    api("kernel32", "GetProcAddress", 2, get_proc_address),
+    api("kernel32", "SetErrorMode", 1, set_error_mode),
+    api(
+        "kernel32",
+        "GetErrorMode",
+        0,
+        |t, _| Ok(t.error_mode as u64),
+    ),
+    api("kernel32", "GetVersion", 0, |_, _| Ok(get_version())),
+    api("kernel32", "GetVersionExA", 1, get_version_ex_a),
+    api("kernel32", "GetVersionExW", 1, get_version_ex_w),
+    // DLLs come from the program's directory or AnyOS itself, so DLL search
+    // settings are accepted and have nothing to change.
+    api("kernel32", "SetDefaultDllDirectories", 1, |_, _| Ok(1)),
+    api("kernel32", "SetDllDirectoryA", 1, |_, _| Ok(1)),
+    api("kernel32", "SetDllDirectoryW", 1, |_, _| Ok(1)),
+    api("kernel32", "GetSystemDirectoryA", 2, |t, a| {
+        Ok(copy_str_out(t, a[0], a[1], SYSTEM_DIR, false))
+    }),
+    api("kernel32", "GetSystemDirectoryW", 2, |t, a| {
+        Ok(copy_str_out(t, a[0], a[1], SYSTEM_DIR, true))
+    }),
+    api("kernel32", "GetWindowsDirectoryA", 2, |t, a| {
+        Ok(copy_str_out(t, a[0], a[1], WINDOWS_DIR, false))
+    }),
+    api("kernel32", "GetWindowsDirectoryW", 2, |t, a| {
+        Ok(copy_str_out(t, a[0], a[1], WINDOWS_DIR, true))
+    }),
 ];
+
+const WINDOWS_DIR: &str = r"C:\Windows";
+const SYSTEM_DIR: &str = r"C:\Windows\System32";
+
+/// Copy `s` into a guest buffer of `size` characters the way most string
+/// APIs do: on success return its length, if it does not fit return the
+/// size needed including the terminator and write nothing.
+fn copy_str_out(t: &mut Thread<'_, '_>, buf: u64, size: u64, s: &str, wide: bool) -> u64 {
+    let units: Vec<u16> = if wide {
+        s.encode_utf16().collect()
+    } else {
+        s.bytes().map(u16::from).collect()
+    };
+    let len = units.len() as u64;
+    if (size as u32 as u64) <= len {
+        return len + 1;
+    }
+    let mut out = Vec::new();
+    for &u in units.iter().chain([&0]) {
+        if wide {
+            out.extend_from_slice(&u.to_le_bytes());
+        } else {
+            out.push(u as u8);
+        }
+    }
+    if t.process.memory.write(buf, &out).is_err() {
+        t.set_last_error(ERROR_NOACCESS);
+        return 0;
+    }
+    len
+}
 
 /// The implementation of `dll!symbol`, if there is one.
 pub(crate) fn find(dll: &str, symbol: &ImportName) -> Option<&'static Api> {
@@ -61,9 +130,10 @@ const STDERR_HANDLE: u64 = 0x18;
 const PSEUDO_PROCESS: u64 = u64::MAX;
 const PSEUDO_THREAD: u64 = u64::MAX - 1;
 
-const ERROR_INVALID_HANDLE: u32 = 6;
-const ERROR_MOD_NOT_FOUND: u32 = 126;
-const ERROR_NOACCESS: u32 = 998;
+pub(crate) const ERROR_INVALID_HANDLE: u32 = 6;
+pub(crate) const ERROR_MOD_NOT_FOUND: u32 = 126;
+pub(crate) const ERROR_NOACCESS: u32 = 998;
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
 fn invalid_handle(t: &Thread<'_, '_>) -> u64 {
     if t.long_mode() {
@@ -161,7 +231,12 @@ fn write_console_w(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     Ok(write_out(t, handle, text.as_bytes(), written, chars))
 }
 
-fn read_wide(t: &Thread<'_, '_>, addr: u64) -> Option<String> {
+pub(crate) fn read_ansi(t: &Thread<'_, '_>, addr: u64) -> Option<String> {
+    let b = t.process.memory.read_cstr(addr, 32768).ok()?;
+    Some(String::from_utf8_lossy(&b).into_owned())
+}
+
+pub(crate) fn read_wide(t: &Thread<'_, '_>, addr: u64) -> Option<String> {
     let mut units = Vec::new();
     let mut b = [0u8; 2];
     for k in 0..32768u64 {
@@ -174,47 +249,61 @@ fn read_wide(t: &Thread<'_, '_>, addr: u64) -> Option<String> {
     None
 }
 
-fn module_handle(t: &mut Thread<'_, '_>, name: Option<String>) -> u64 {
-    let Some(name) = name else {
-        return t.process.modules[0].base;
+fn set_error_mode(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let old = t.error_mode;
+    t.error_mode = a[0] as u32;
+    Ok(old as u64)
+}
+
+/// The Windows version AnyOS reports: Windows 10 22H2.
+const VERSION: (u32, u32, u32) = (10, 0, 19045);
+const VER_PLATFORM_WIN32_NT: u32 = 2;
+const VER_NT_WORKSTATION: u8 = 1;
+
+/// Major in the low byte, minor in the next, build in the high word.
+fn get_version() -> u64 {
+    let (major, minor, build) = VERSION;
+    (build << 16 | minor << 8 | major) as u64
+}
+
+/// Fill an OSVERSIONINFO(EX)A/W, whose first DWORD says which one it is.
+fn get_version_ex(t: &mut Thread<'_, '_>, ptr: u64, wide: bool) -> Result<u64, Halt> {
+    let csd = if wide { 256 } else { 128 };
+    let base = 20 + csd;
+    let Some(size) = guest_bytes(t, ptr, 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    else {
+        t.set_last_error(ERROR_NOACCESS);
+        return Ok(0);
     };
-    // Accept a path; Windows matches on the file name.
-    let file = name.rsplit(['\\', '/']).next().unwrap_or(&name);
-    match t.process.module(file) {
-        Some(m) => m.base,
-        None => {
-            t.set_last_error(ERROR_MOD_NOT_FOUND);
-            0
-        }
+    let ex = if size as u64 == base {
+        false
+    } else if size as u64 == base + 8 {
+        true
+    } else {
+        t.set_last_error(ERROR_INSUFFICIENT_BUFFER);
+        return Ok(0);
+    };
+    let (major, minor, build) = VERSION;
+    let mut info = Vec::with_capacity(size as usize);
+    for v in [size, major, minor, build, VER_PLATFORM_WIN32_NT] {
+        info.extend_from_slice(&v.to_le_bytes());
     }
+    info.resize(base as usize, 0); // empty service pack string
+    if ex {
+        // Service pack 0.0, no suite flags, a workstation.
+        info.extend_from_slice(&[0, 0, 0, 0, 0, 0, VER_NT_WORKSTATION, 0]);
+    }
+    if t.process.memory.write(ptr, &info).is_err() {
+        t.set_last_error(ERROR_NOACCESS);
+        return Ok(0);
+    }
+    Ok(1)
 }
 
-fn get_module_handle_a(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let name = if a[0] == 0 {
-        None
-    } else {
-        match t.process.memory.read_cstr(a[0], 32768) {
-            Ok(b) => Some(String::from_utf8_lossy(&b).into_owned()),
-            Err(_) => {
-                t.set_last_error(ERROR_NOACCESS);
-                return Ok(0);
-            }
-        }
-    };
-    Ok(module_handle(t, name))
+fn get_version_ex_a(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    get_version_ex(t, a[0], false)
 }
 
-fn get_module_handle_w(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
-    let name = if a[0] == 0 {
-        None
-    } else {
-        match read_wide(t, a[0]) {
-            Some(s) => Some(s),
-            None => {
-                t.set_last_error(ERROR_NOACCESS);
-                return Ok(0);
-            }
-        }
-    };
-    Ok(module_handle(t, name))
+fn get_version_ex_w(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    get_version_ex(t, a[0], true)
 }

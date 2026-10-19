@@ -17,6 +17,7 @@
 //! [`RunError::UnimplementedApi`] naming it, so missing coverage shows up by name.
 
 mod api;
+mod module;
 mod thread;
 
 use std::io::Write;
