@@ -2,3 +2,4 @@
 *.whl
 anyos/Launcher
 build/
+/scalarDiagnostics/

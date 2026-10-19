@@ -1,0 +1,52 @@
+name: Set release channel
+
+# Move a published release between the two channels the updater distinguishes:
+#
+#   false (full)        -> `anyos update` offers it to every install that
+#                          checks, because it is a non-prerelease release.
+#   true  (pre-release) -> invisible to the updater; only people who download
+#                          it from the releases page get it.
+#
+# Use it to promote a pre-release once it is ready to ship widely, and to send
+# one back if it should not have gone out.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.0.0-alpha'
+        required: true
+      prerelease:
+        description: 'true = pre-release (updater ignores it), false = full release (offered to everyone)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  set-channel:
+    name: Set channel for ${{ github.event.inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote or demote the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag }}
+          PRE: ${{ github.event.inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ "$PRE" == "true" ]]; then
+            gh release edit "$TAG" --prerelease
+          else
+            # `--latest` matters: the updater reads /releases/latest, which is
+            # the release GitHub marks latest, not simply the newest one.
+            gh release edit "$TAG" --prerelease=false --latest
+          fi
+          gh api "repos/$GH_REPO/releases/tags/$TAG" \
+            --jq '{tag: .tag_name, prerelease: .prerelease, draft: .draft}'

@@ -142,9 +142,15 @@ static CORE: &[Api] = &[
         // Read ExceptionInformation array (pointer in a[3]).
         let mut params = Vec::with_capacity(n_params);
         if n_params > 0 && a[3] != 0 {
+            let stride = if t.long_mode() { 8 } else { 4 };
             for i in 0..n_params {
-                if let Some(p) = read_u32(t, a[3] + i as u64 * 4) {
-                    params.push(p as u64);
+                let p = if stride == 8 {
+                    read_u64(t, a[3] + i as u64 * 8)
+                } else {
+                    read_u32(t, a[3] + i as u64 * 4).map(u64::from)
+                };
+                if let Some(p) = p {
+                    params.push(p);
                 }
             }
         }
@@ -153,16 +159,52 @@ static CORE: &[Api] = &[
             // x86: walk the per-thread SEH chain (FS:[0]).
             crate::seh::dispatch_exception_32(t, code, flags, exception_addr, &params)
         } else {
-            // x64: table-based unwind not yet supported; report the exception.
-            Err(crate::RunError::GuestException {
-                code,
-                location: t.describe(exception_addr),
-            }
-            .into())
+            // x64: walk the function table (`.pdata`) from the raise point.
+            crate::seh64::dispatch_exception_64(t, code, flags, exception_addr, &params)
         }
     }),
     k32("RaiseFailFastException", 3, |_, _| {
         Err(Halt::Exit(0xC000_0409))
+    }),
+    // RtlUnwind(TargetFrame, TargetIp, ExceptionRecord, ReturnValue): the
+    // unwind Delphi's RTL performs before entering an `except` block.
+    k32("RtlUnwind", 4, |t, a| {
+        if t.long_mode() {
+            // TargetIp is the continuation the caller wants; ContextRecord is
+            // the raise point's, or the caller's when there is no exception.
+            crate::seh64::unwind_64(t, a[0], a[1], a[2], a[3], 0)
+        } else {
+            crate::seh::unwind_32(t, a[0], a[2], a[3])
+        }
+    }),
+    // The same two functions as ntdll exports them, which is where a 64-bit
+    // program's own exception machinery imports them from.
+    api("ntdll", "RtlUnwind", 4, |t, a| {
+        if t.long_mode() {
+            crate::seh64::unwind_64(t, a[0], a[1], a[2], a[3], 0)
+        } else {
+            crate::seh::unwind_32(t, a[0], a[2], a[3])
+        }
+    }),
+    // RtlUnwindEx(TargetFrame, TargetIp, ExceptionRecord, ReturnValue,
+    //             ContextRecord, HistoryTable): what a language handler calls
+    //             to reach the frame whose `except` block takes the exception.
+    api("ntdll", "RtlUnwindEx", 6, |t, a| {
+        if t.long_mode() {
+            crate::seh64::unwind_64(t, a[0], a[1], a[2], a[3], a[4])
+        } else {
+            // The 32-bit walk has no use for the CONTEXT or the history table.
+            crate::seh::unwind_32(t, a[0], a[2], a[3])
+        }
+    }),
+    // RtlCaptureContext(ContextRecord): the calling thread's registers.
+    api("ntdll", "RtlCaptureContext", 1, |t, a| {
+        let ok = if t.long_mode() {
+            crate::seh64::capture_context_64(t, a[0])
+        } else {
+            crate::seh::capture_context_32(t, a[0])
+        };
+        Ok(u64::from(ok))
     }),
     k32("AddVectoredExceptionHandler", 2, |_, a| Ok(a[1].max(1))),
     k32("RemoveVectoredExceptionHandler", 1, |_, _| Ok(1)),
@@ -317,6 +359,10 @@ pub(crate) fn write_bytes(t: &mut Thread<'_, '_>, addr: u64, data: &[u8]) -> boo
 pub(crate) fn read_u16(t: &Thread<'_, '_>, addr: u64) -> Option<u16> {
     let b = guest_bytes(t, addr, 2)?;
     Some(u16::from_le_bytes([b[0], b[1]]))
+}
+
+pub(crate) fn read_i16(t: &Thread<'_, '_>, addr: u64) -> Option<i16> {
+    read_u16(t, addr).map(|v| v as i16)
 }
 
 pub(crate) fn read_u32(t: &Thread<'_, '_>, addr: u64) -> Option<u32> {

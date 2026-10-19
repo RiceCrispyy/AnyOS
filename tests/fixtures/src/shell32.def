@@ -1,0 +1,8 @@
+LIBRARY shell32.dll
+EXPORTS
+  SHGetFolderPathA@20
+  SHGetFolderPathW@20
+  SHGetSpecialFolderPathA@16
+  SHGetSpecialFolderPathW@16
+  SHCreateDirectoryExA@12
+  SHCreateDirectoryExW@12

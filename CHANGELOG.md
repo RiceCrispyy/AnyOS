@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the current process/thread queries. DLL entry points and TLS callbacks run
   before the program. `--trace` logs every API call. Unsupported APIs and
   instructions stop the run with a message naming them.
+- Structured exception handling for x64 programs, alongside the 32-bit SEH chain:
+  `RaiseException` walks the function table in `.pdata`, calls each function's
+  language handler with its scope table, and `RtlUnwind`/`RtlUnwindEx` run the
+  `finally` bodies of the frames in between before continuing in the `except`
+  block, on the target frame's own stack. A 64-bit `__try`/`__except`/`__finally`
+  program no longer stops with `UnimplementedApi`; `tests/fixtures/src/seh64.c`
+  covers it end to end.
 - `anyos-backend` — the `ExecutionBackend` trait shared by all execution backends.
 - Release workflow: pushing a `v*` tag builds `anyos` for Linux x86-64, Windows
   x86-64 and macOS (universal) and attaches the archives and `SHA256SUMS` to the

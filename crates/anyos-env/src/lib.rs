@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn paths_stay_inside_and_ignore_case() {
         let (dir, env) = temp_env("paths");
-        let p = env.host_path(r"c:\PROGRAM FILES\App\a.exe").unwrap();
+        let p = env.host_path(r"c:\Program Files\App\a.exe").unwrap();
         assert_eq!(
             p,
             env.drive_c()

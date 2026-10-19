@@ -26,23 +26,54 @@ const MAXINTATOM: u32 = 0xC000;
 pub(crate) fn init_env(t: &mut Thread<'_, '_>, extra: &[(String, String)]) {
     let user = t.host.user.clone();
     let long = t.long_mode();
-    let (profile, temp) = if t.host.drive_c.is_some() {
+    let (profile, roaming, local, temp) = if t.host.drive_c.is_some() {
         let profile = format!(r"C:\Users\{user}");
-        let temp = format!(r"{profile}\AppData\Local\Temp");
-        (profile, temp)
+        let roaming = format!(r"{profile}\AppData\Roaming");
+        let local = format!(r"{profile}\AppData\Local");
+        let temp = format!(r"{local}\Temp");
+        // Windows has these folders already, and an application writes into
+        // them without making them first.
+        for dir in [&profile, &roaming, &local, &temp] {
+            if let Some(host) = crate::file::host_path(t, dir) {
+                let _ = std::fs::create_dir_all(host);
+            }
+        }
+        (profile, roaming, local, temp)
     } else {
-        let home = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .map(|h| crate::file::guest_path(t, &h))
-            .unwrap_or_else(|| format!(r"C:\Users\{user}"));
+        // No `C:` drive: the host's own home and application folders, on `Z:`,
+        // the way `TEMP` already points at the host's temporary directory. A
+        // program that is told to put its files in `C:\Users\<user>\AppData`,
+        // which no host has, fails to create them; these folders exist.
         let temp = crate::file::guest_path(t, &std::env::temp_dir());
-        (home, temp)
+        match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            Some(home) => {
+                let (roaming, local) = host_appdata(&home);
+                for dir in [&roaming, &local] {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                (
+                    crate::file::guest_path(t, &home),
+                    crate::file::guest_path(t, &roaming),
+                    crate::file::guest_path(t, &local),
+                    temp,
+                )
+            }
+            None => {
+                let profile = format!(r"C:\Users\{user}");
+                (
+                    profile.clone(),
+                    format!(r"{profile}\AppData\Roaming"),
+                    format!(r"{profile}\AppData\Local"),
+                    temp,
+                )
+            }
+        }
     };
     let nproc = std::thread::available_parallelism().map_or(1, |n| n.get());
     let home_path = profile.get(2..).unwrap_or(r"\").to_string();
     let mut env: Vec<(String, String)> = vec![
         ("ALLUSERSPROFILE".into(), r"C:\ProgramData".into()),
-        ("APPDATA".into(), format!(r"{profile}\AppData\Roaming")),
+        ("APPDATA".into(), roaming),
         (
             "CommonProgramFiles".into(),
             r"C:\Program Files\Common Files".into(),
@@ -51,7 +82,7 @@ pub(crate) fn init_env(t: &mut Thread<'_, '_>, extra: &[(String, String)]) {
         ("ComSpec".into(), format!(r"{SYSTEM_DIR}\cmd.exe")),
         ("HOMEDRIVE".into(), profile.get(..2).unwrap_or("C:").into()),
         ("HOMEPATH".into(), home_path),
-        ("LOCALAPPDATA".into(), format!(r"{profile}\AppData\Local")),
+        ("LOCALAPPDATA".into(), local),
         ("NUMBER_OF_PROCESSORS".into(), nproc.to_string()),
         ("OS".into(), "Windows_NT".into()),
         (
@@ -89,6 +120,30 @@ pub(crate) fn init_env(t: &mut Thread<'_, '_>, extra: &[(String, String)]) {
     t.k.env = env;
     for (k, v) in extra {
         set_env(t, k, Some(v));
+    }
+}
+
+/// The host's roaming and local application folders: what `%APPDATA%` and
+/// `%LOCALAPPDATA%` mean on this host, as against the `C:` drive of an AnyOS
+/// environment.
+fn host_appdata(home: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let var = |name: &str| std::env::var_os(name).map(std::path::PathBuf::from);
+    if cfg!(windows) {
+        (
+            var("APPDATA").unwrap_or_else(|| home.join("AppData").join("Roaming")),
+            var("LOCALAPPDATA").unwrap_or_else(|| home.join("AppData").join("Local")),
+        )
+    } else if cfg!(target_os = "macos") {
+        // One application-support folder; data an application keeps for the
+        // user stays there rather than in a cache the system may clear.
+        let support = home.join("Library").join("Application Support");
+        (support.clone(), support)
+    } else {
+        let dir = |name: &str, fallback: &str| var(name).unwrap_or_else(|| home.join(fallback));
+        (
+            dir("XDG_CONFIG_HOME", ".config"),
+            dir("XDG_DATA_HOME", ".local/share"),
+        )
     }
 }
 

@@ -278,7 +278,8 @@ Other macOS constraints:
    host stdout. This works on any Mac with no Rosetta or JIT entitlement, and it
    fixes the `ExecutionBackend` and call-gate dispatch interfaces. Still missing
    for real programs: x87 and SSE floating point, cdecl APIs (`msvcrt`), a heap,
-   files, and structured exception handling.
+   and files. Structured exceptions work on both architectures: the x86 FS:[0]
+   chain and, on x64, the function table in `.pdata` with its language handlers.
 2. **macOS guest memory backend.** Map guest images at their Windows addresses
    with `mmap` and handle 16 KiB pages.
 3. **Rosetta spike (Apple Silicon).** Build AnyOS for x86-64, run the x64 fixture's
@@ -400,7 +401,7 @@ writes (`*_raw`) marks the places where it acts as the kernel.
 | 1. PE inspector (`anyos inspect`) | Done |
 | 2. PE loader (map, relocate, bind, TLS, protections) | Done (emulated guest memory) |
 | 3. Execution prototype on macOS: interpreter, call-gate dispatch, macOS guest memory, Rosetta and ARM64 spikes (see above) | Interpreter and call-gate dispatch done; macOS guest memory next |
-| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | kernel32 and the advapi32 registry done; CRT DLLs and exceptions next |
+| 4. Console compatibility: kernel32/ntdll/CRT subset, files, errors, threads | kernel32 and the advapi32 registry done; exceptions done (x86 SEH chain and x64 `.pdata` unwind, `RtlUnwind`/`RtlUnwindEx`); CRT DLLs next |
 | 4a. Installing apps: environments, `anyos install` (extract route first, then silent run) | Identification, environments, MSI/ZIP/7-Zip done; Inno and NSIS next |
 | 5. Basic Win32 GUI on macOS: windows, messages, input, GDI | |
 | 6. Modern .NET via hostfxr/CoreCLR | |

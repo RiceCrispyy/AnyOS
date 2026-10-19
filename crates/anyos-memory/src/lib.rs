@@ -15,6 +15,8 @@
 //!   (which, like the Windows kernel, may write to read-only image pages), but
 //!   still require the memory to be mapped.
 
+pub mod optimization;
+
 use std::collections::BTreeMap;
 use std::fmt;
 

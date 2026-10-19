@@ -69,19 +69,28 @@ impl CallGate {
         Ok(address)
     }
 
-    /// Which stub, if any, lives at `address`.
+    /// Which stub starts at `address`, if any.
     pub fn lookup(&self, address: u64) -> Option<&GateEntry> {
+        let (entry, offset) = self.owner(address)?;
+        (offset == 0).then_some(entry)
+    }
+
+    /// The stub `address` is inside, with its offset into that stub's
+    /// [`STUB_SIZE`] bytes. Every byte of a chunk is a trap, so a guest that
+    /// lands past the first byte of a stub (a resume just after the trap, see
+    /// `anyos-win32`'s SEH dispatch) still belongs to a known API.
+    pub fn owner(&self, address: u64) -> Option<(&GateEntry, u64)> {
         let per_chunk = CHUNK_SIZE / STUB_SIZE;
         let (chunk_idx, base) = self
             .chunks
             .iter()
             .enumerate()
             .find(|(_, &b)| address >= b && address < b + CHUNK_SIZE)?;
-        if !(address - base).is_multiple_of(STUB_SIZE) {
-            return None;
-        }
-        let id = chunk_idx as u64 * per_chunk + (address - base) / STUB_SIZE;
-        self.entries.get(id as usize)
+        let offset = address - base;
+        let id = chunk_idx as u64 * per_chunk + offset / STUB_SIZE;
+        self.entries
+            .get(id as usize)
+            .map(|e| (e, offset % STUB_SIZE))
     }
 }
 
@@ -101,4 +110,49 @@ fn fill_traps(mem: &mut AddressSpace, base: u64, machine: Machine) -> Result<(),
         .take(CHUNK_SIZE as usize)
         .collect();
     mem.write_raw(base, &buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(s: &str) -> ImportName {
+        ImportName::Name {
+            name: s.into(),
+            hint: 0,
+        }
+    }
+
+    #[test]
+    fn a_stub_owns_all_of_its_bytes() {
+        let mut mem = AddressSpace::new(0x10000, 0x8000_0000, 1 << 24);
+        let mut gate = CallGate::default();
+        let first = gate
+            .stub_for(
+                &mut mem,
+                Machine::X86,
+                "kernel32.dll",
+                &name("GetLastError"),
+            )
+            .unwrap();
+        let second = gate
+            .stub_for(
+                &mut mem,
+                Machine::X86,
+                "kernel32.dll",
+                &name("RaiseException"),
+            )
+            .unwrap();
+        assert_eq!(second, first + STUB_SIZE);
+        // Only a stub's first byte is a call site.
+        assert_eq!(gate.lookup(first).unwrap().symbol, name("GetLastError"));
+        assert!(gate.lookup(first + 1).is_none());
+        // The rest of the stub -- all trap bytes -- still resolves to it, which
+        // is how a resume just past the trap finds its way home.
+        assert_eq!(gate.owner(first + 1).unwrap().1, 1);
+        let (entry, offset) = gate.owner(first + STUB_SIZE).unwrap();
+        assert_eq!((entry.symbol.clone(), offset), (name("RaiseException"), 0));
+        // Outside the gate region there is no owner.
+        assert!(gate.owner(0x20000).is_none());
+    }
 }

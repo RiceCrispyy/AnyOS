@@ -160,3 +160,29 @@ fn kernel32_apis_behave_like_windows() {
         std::fs::remove_dir_all(&env).unwrap();
     }
 }
+
+/// x64 structured exception handling: a real `__try`/`__except`/`__finally`
+/// program, whose exceptions travel through the function table in `.pdata`,
+/// the language handler and RtlUnwindEx (see seh64.c).
+#[test]
+fn x64_structured_exceptions_unwind() {
+    let (r, out, err) = run("x64", "seh64.exe", &RunOptions::default());
+    let outcome = r.unwrap_or_else(|e| panic!("{e}\n{out}{err}"));
+    assert_eq!((outcome.exit_code, out.as_str()), (0, "ok\n"), "{err}");
+}
+
+/// The same fixture with no environment at all. A program that is not installed
+/// in one still has to be able to write its files: `%APPDATA%`, `%LOCALAPPDATA%`
+/// and `%TEMP%` are folders that exist, as they do on Windows.
+#[test]
+fn apitest_runs_outside_an_environment() {
+    for arch in ["x64", "x86"] {
+        let (r, out, err) = run(arch, "apitest.exe", &RunOptions::default());
+        let outcome = r.unwrap_or_else(|e| panic!("{arch}: {e}\n{out}{err}"));
+        assert_eq!(
+            (outcome.exit_code, out.as_str()),
+            (0, "ok\n"),
+            "{arch}: {err}"
+        );
+    }
+}

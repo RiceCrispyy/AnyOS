@@ -18,6 +18,7 @@
 
 mod api;
 mod console;
+mod dialogs;
 mod file;
 mod heap;
 mod locale;
@@ -28,6 +29,7 @@ mod process;
 mod registry;
 mod resource;
 mod seh;
+mod seh64;
 mod strings;
 mod sync;
 mod sysinfo;

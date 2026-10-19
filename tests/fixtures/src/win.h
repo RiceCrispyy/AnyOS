@@ -26,6 +26,13 @@ typedef __SIZE_TYPE__ SIZE_T;
 typedef __UINTPTR_TYPE__ ULONG_PTR;
 typedef ULONG_PTR DWORD_PTR;
 __declspec(dllimport) void WINAPI RaiseException(DWORD, DWORD, DWORD, const ULONG_PTR *);
+/* Windows declares this VOID; the fixture reads the value it leaves in EAX, so
+ * it is declared as returning it (same stdcall, same 16 argument bytes). */
+__declspec(dllimport) DWORD WINAPI RtlUnwind(void *, void *, void *, void *);
+/* ntdll's, used by the x64 fixture to unwind to the frame that caught an
+ * exception: TargetFrame, TargetIp, ExceptionRecord, ReturnValue, the context
+ * to continue with, and the unwind history table. */
+__declspec(dllimport) void WINAPI RtlUnwindEx(void *, void *, void *, void *, void *, void *);
 typedef void *HKEY;
 typedef long LSTATUS;
 typedef DWORD(WINAPI *THREAD_START)(void *);
@@ -92,6 +99,8 @@ typedef struct {
 #define GENERIC_READ 0x80000000
 #define GENERIC_WRITE 0x40000000
 #define CREATE_NEW 1
+#define CREATE_ALWAYS 2
+#define FILE_ATTRIBUTE_DIRECTORY 0x10
 #define FILE_ATTRIBUTE_ARCHIVE 0x20
 #define FILE_ATTRIBUTE_NORMAL 0x80
 #define FILE_BEGIN 0
@@ -200,3 +209,23 @@ K32 LSTATUS WINAPI RegEnumValueA(HKEY, DWORD, char *, DWORD *, DWORD *, DWORD *,
 K32 LSTATUS WINAPI RegEnumKeyExA(HKEY, DWORD, char *, DWORD *, DWORD *, char *, DWORD *, FILETIME *);
 K32 LSTATUS WINAPI RegDeleteValueA(HKEY, const char *);
 K32 LSTATUS WINAPI RegDeleteKeyA(HKEY, const char *);
+
+/* ---- shell32 (used by apitest.c) ---- */
+#define S32 __declspec(dllimport)
+#define MAX_PATH 260
+#define CSIDL_PERSONAL 0x0005
+#define CSIDL_DESKTOPDIRECTORY 0x0010
+#define CSIDL_NETWORK 0x0012
+#define CSIDL_APPDATA 0x001A
+#define CSIDL_LOCAL_APPDATA 0x001C
+#define CSIDL_PROGRAM_FILES 0x0026
+#define CSIDL_PROFILE 0x0028
+#define CSIDL_FLAG_CREATE 0x8000
+#define S_OK 0
+typedef long HRESULT;
+S32 HRESULT WINAPI SHGetFolderPathA(void *, int, void *, DWORD, char *);
+S32 HRESULT WINAPI SHGetFolderPathW(void *, int, void *, DWORD, WCHAR *);
+S32 BOOL WINAPI SHGetSpecialFolderPathA(void *, char *, int, BOOL);
+S32 BOOL WINAPI SHGetSpecialFolderPathW(void *, WCHAR *, int, BOOL);
+S32 int WINAPI SHCreateDirectoryExA(void *, const char *, const void *);
+S32 int WINAPI SHCreateDirectoryExW(void *, const WCHAR *, const void *);

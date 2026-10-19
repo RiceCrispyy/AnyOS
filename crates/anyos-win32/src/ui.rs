@@ -9,6 +9,9 @@
 
 use crate::api::*;
 use crate::thread::{Halt, Thread};
+use anyos_ui::{MessageType, WindowParams};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Fake handle allocation
@@ -148,6 +151,7 @@ const WM_SETTEXT: u32 = 0x000C;
 const WM_GETTEXT: u32 = 0x000D;
 const WM_GETTEXTLENGTH: u32 = 0x000E;
 const WM_PAINT: u32 = 0x000F;
+const WM_CLOSE: u32 = 0x0010;
 const WM_QUIT: u32 = 0x0012;
 const WM_INITDIALOG: u32 = 0x0110;
 const WM_COMMAND: u32 = 0x0111;
@@ -250,20 +254,75 @@ fn create_window_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64
     } else {
         read_str(t, title_ptr, wide).unwrap_or_default()
     };
-    let hwnd =
-        t.k.ui
-            .create_window(class, title, style, ex_style, x, y, w, h, parent, id);
+
+    // Create in legacy UI state for compatibility
+    let hwnd = t.k.ui.create_window(
+        class.clone(),
+        title.clone(),
+        style,
+        ex_style,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        id,
+    );
+
+    // Also try to create through UIBackend if available
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let params = WindowParams {
+            parent: anyos_ui::WindowHandle::from_u64(parent),
+            class,
+            title,
+            style,
+            ex_style,
+            rect: anyos_ui::graphics::Rect {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            instance: 0,
+            user_data: 0,
+            menu: 0,
+            id: id as u32,
+        };
+
+        if let Ok(ui_handle) = backend.create_window(params) {
+            // Map the Win32 HWND to the UIBackend handle
+            t.k.hwnd_map.insert(hwnd, ui_handle);
+        }
+    }
+
     Ok(hwnd)
 }
 
 fn destroy_window(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let hwnd = a[0];
+
+    // Destroy through UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.remove(&hwnd) {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let _ = backend.destroy_window(ui_handle);
+        }
+    }
+
     t.k.ui.windows.retain(|w| w.hwnd != hwnd);
     Ok(1)
 }
 
 fn show_window(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let (hwnd, cmd) = (a[0], a[1]);
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let visible = cmd != 0; // SW_HIDE = 0
+            let _ = backend.show_window(ui_handle, visible);
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         let was_visible = w.visible;
         w.visible = cmd != 0; // SW_HIDE = 0
@@ -286,6 +345,14 @@ fn get_window_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64,
 fn set_window_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
     let (hwnd, ptr) = (a[0], a[1]);
     let text = read_str(t, ptr, wide).unwrap_or_default();
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            let _ = backend.set_window_title(ui_handle, &text);
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         w.title = text;
     }
@@ -298,6 +365,22 @@ fn set_window_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     let flags = a[6] as u32;
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_NOSIZE: u32 = 0x0001;
+
+    // Update UIBackend if mapped
+    if let Some(ui_handle) = t.k.hwnd_map.get(&hwnd).copied() {
+        if let Some(backend) = t.k.ui_manager.backend_mut() {
+            if (flags & SWP_NOMOVE == 0) || (flags & SWP_NOSIZE == 0) {
+                let rect = anyos_ui::graphics::Rect {
+                    left: x,
+                    top: y,
+                    right: x + cx,
+                    bottom: y + cy,
+                };
+                let _ = backend.set_window_rect(ui_handle, rect);
+            }
+        }
+    }
+
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         if flags & SWP_NOMOVE == 0 {
             w.x = x;
@@ -359,6 +442,47 @@ fn peek_get_message(
     blocking: bool,
 ) -> Result<u64, Halt> {
     let msg_ptr = a[0];
+
+    // Try to pump a message from UIBackend first
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let timeout = if blocking {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(0)
+        };
+        if let Ok(Some(ui_msg)) = backend.pump_message(timeout) {
+            // Convert UIBackend message to Win32 MSG
+            let message = match ui_msg.msg_type {
+                MessageType::Quit => WM_QUIT,
+                MessageType::Paint => WM_PAINT,
+                MessageType::KeyDown => 0x0100,          // WM_KEYDOWN
+                MessageType::KeyUp => 0x0101,            // WM_KEYUP
+                MessageType::Char => 0x0102,             // WM_CHAR
+                MessageType::MouseMove => 0x0200,        // WM_MOUSEMOVE
+                MessageType::LeftButtonDown => 0x0201,   // WM_LBUTTONDOWN
+                MessageType::LeftButtonUp => 0x0202,     // WM_LBUTTONUP
+                MessageType::RightButtonDown => 0x0204,  // WM_RBUTTONDOWN
+                MessageType::RightButtonUp => 0x0205,    // WM_RBUTTONUP
+                MessageType::MiddleButtonDown => 0x0207, // WM_MBUTTONDOWN
+                MessageType::MiddleButtonUp => 0x0208,   // WM_MBUTTONUP
+                MessageType::InitDialog => WM_INITDIALOG,
+                MessageType::Command => WM_COMMAND,
+                MessageType::Close => WM_CLOSE,
+                MessageType::Other(code) => code,
+            };
+
+            let m = Msg {
+                hwnd: ui_msg.hwnd.as_u64(),
+                message,
+                wparam: ui_msg.wparam,
+                lparam: ui_msg.lparam,
+                time: ui_msg.time,
+            };
+            write_msg(t, msg_ptr, &m);
+            return Ok(1);
+        }
+    }
+
     // Check for WM_QUIT first
     if let Some(code) = t.k.ui.quit.take() {
         let m = Msg {
@@ -494,16 +618,27 @@ fn message_box(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Hal
 }
 
 fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u64, Halt> {
-    // Create a fake dialog window, call initproc, run the message loop until
-    // EndDialog is called.
+    // DialogBoxParam: create a modal dialog from a resource template
+    // Parameters: HINSTANCE hInstance, LPCSTR lpTemplate, HWND hWndParent,
+    //            DLGPROC lpDialogFunc, LPARAM dwInitParam
     let (_hinstance, _template, parent, dlg_proc, init_param) = (a[0], a[1], a[2], a[3], a[4]);
     if dlg_proc == 0 {
         return Ok(0);
     }
+
+    // Phase 3: Create dialog with proper styling
+    const WS_VISIBLE: u32 = 0x1000_0000;
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_CAPTION: u32 = 0xC00000;
+    const WS_SYSMENU: u32 = 0x80000;
+    const WS_DLGFRAME: u32 = 0x400000;
+
+    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_DLGFRAME | WS_VISIBLE;
+
     let hwnd = t.k.ui.create_window(
         "Dialog".into(),
         String::new(),
-        WS_VISIBLE,
+        style,
         0,
         100,
         100,
@@ -512,19 +647,35 @@ fn dialog_box_param(t: &mut Thread<'_, '_>, a: &[u64], _wide: bool) -> Result<u6
         parent,
         0,
     );
-    // Post WM_INITDIALOG so the dialog proc runs on the next DispatchMessage.
+
+    // Store the dialog proc for message routing
+    if let Some(w) = t.k.ui.window_mut(hwnd) {
+        w.wnd_proc = dlg_proc;
+    }
+
+    // Post WM_INITDIALOG so the dialog proc runs on the next DispatchMessage
     post(t, hwnd, WM_INITDIALOG, hwnd, init_param);
-    // Return the dialog result (EndDialog stores it).
-    // Since we don't actually pump a nested message loop here, just return 1.
+
+    // Return the dialog result (EndDialog stores it)
+    // In a nested message loop implementation, this would block until EndDialog is called
     Ok(1)
 }
 
 fn end_dialog(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    // EndDialog: terminates a modal dialog and returns a result code
+    // Parameters: HWND hDlg, INT_PTR nResult
     let (hwnd, result) = (a[0], a[1] as i32);
+
+    // Store the dialog result
     if let Some(w) = t.k.ui.window_mut(hwnd) {
         w.dialog_result = Some(result);
+        // Post a WM_CLOSE message to signal the dialog should close
+        post(t, hwnd, WM_CLOSE, 0, 0);
     }
-    t.k.ui.windows.retain(|w| w.hwnd != hwnd);
+
+    // Note: In a real implementation with a nested message loop,
+    // this would unwind the modal loop and return the result code.
+    // For now, we'll keep the window and let the normal message pump handle it.
     Ok(1)
 }
 
@@ -571,6 +722,79 @@ fn get_dlg_item_text(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u6
         .unwrap_or_default();
     let (n, _) = copy_str_truncate(t, buf, cch as u64, &title, wide);
     Ok(n)
+}
+
+// Phase 3: Dialog control APIs
+fn create_window_ex_dialog(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    // Phase 3: CreateWindowEx for dialog controls
+    // Used by dialog templates to create BUTTON, EDIT, STATIC, etc.
+    let (ex_style, class_ptr, title_ptr, style) = (a[0] as u32, a[1], a[2], a[3] as u32);
+    let (x, y, w, h) = (a[4] as i32, a[5] as i32, a[6] as i32, a[7] as i32);
+    let (parent, id) = (a[8], a[9] as u32);
+
+    let class = if class_ptr < 0xC000 {
+        format!("#{}", class_ptr)
+    } else {
+        read_str(t, class_ptr, wide).unwrap_or_default()
+    };
+
+    let title = if title_ptr == 0 {
+        String::new()
+    } else {
+        read_str(t, title_ptr, wide).unwrap_or_default()
+    };
+
+    // Create the control as a child window
+    let hwnd = t.k.ui.create_window(
+        class.clone(),
+        title.clone(),
+        style | WS_CHILD,
+        ex_style,
+        x,
+        y,
+        w,
+        h,
+        parent,
+        id as u64,
+    );
+
+    // Also try to create through UIBackend if available
+    if let Some(backend) = t.k.ui_manager.backend_mut() {
+        let params = WindowParams {
+            parent: anyos_ui::WindowHandle::from_u64(parent),
+            class,
+            title,
+            style: style | WS_CHILD,
+            ex_style,
+            rect: anyos_ui::graphics::Rect {
+                left: x,
+                top: y,
+                right: x + w,
+                bottom: y + h,
+            },
+            instance: 0,
+            user_data: 0,
+            menu: 0,
+            id,
+        };
+
+        if let Ok(ui_handle) = backend.create_window(params) {
+            // Map the Win32 HWND to the UIBackend handle
+            t.k.hwnd_map.insert(hwnd, ui_handle);
+        }
+    }
+
+    Ok(hwnd)
+}
+
+fn is_dialog_message(_t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    // IsDialogMessage: checks if a message is intended for the dialog
+    // Phase 3: Would pre-process keyboard messages for tab order, etc.
+    let _hwnd = a[0];
+    let _msg_ptr = a[1];
+
+    // For now, return FALSE (message not handled)
+    Ok(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,15 +1281,39 @@ fn get_cursor_pos(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
     Ok(1)
 }
 
-fn get_async_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
-    Ok(0) // key not pressed
+fn key_state(t: &Thread<'_, '_>) -> &'static [u8] {
+    static KEY_STATE: OnceLock<[u8; 256]> = OnceLock::new();
+    KEY_STATE.get_or_init(|| [1; 256])
 }
 
-fn get_key_state(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
-    Ok(0)
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
+const WM_CHAR: u32 = 0x0102;
+
+fn get_async_key_state(t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+    Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
 }
 
-fn translate_message(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+fn get_key_state(t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
+    Ok(key_state(t)[_a[0] as usize & 0x7F] as u64)
+}
+
+fn read_msg(t: &Thread<'_, '_>, ptr: u64) -> Msg {
+    let m = Msg {
+        hwnd: read_ptr(t, ptr).unwrap_or(0),
+        message: read_u32(t, ptr + 8).unwrap_or(0),
+        wparam: read_ptr(t, ptr + 16).unwrap_or(0),
+        lparam: read_ptr(t, ptr + 24).unwrap_or(0),
+        time: read_u32(t, ptr + 32).unwrap_or(0),
+    };
+    m
+}
+
+fn translate_message(t: &mut Thread<'_, '_>, a: &[u64]) -> Result<u64, Halt> {
+    let m = read_msg(t, a[0]);
+    if m.message == WM_KEYDOWN || m.message == WM_KEYUP || m.message == WM_CHAR {
+        t.k.ui.queue.push_back(m);
+    }
     Ok(1)
 }
 
@@ -1197,22 +1445,153 @@ fn shell_execute_ex(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
     Ok(1)
 }
 
+// Shell folders. A program that cannot ask where its own data goes writes its
+// files somewhere that does not exist and reports a failure to create them, so
+// every folder the shell is asked for comes from the environment the program
+// was given rather than from a fixed string.
+
+/// `CSIDL_FLAG_CREATE` / `SHGFP_TYPE` bits that are not part of the folder id.
+const CSIDL_FLAG_CREATE: u32 = 0x8000;
+/// The `MAX_PATH` buffer both calls document for the path they fill in.
+const SHELL_FOLDER_CHARS: u64 = 260;
+/// `HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER)`.
+const E_INVALIDARG: u64 = 0x8007_0057;
+/// `HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)`.
+const E_INSUFFICIENT_BUFFER: u64 = 0x8007_007A;
+/// `SHCreateDirectoryEx` rejects a path it cannot see as fully qualified.
+const ERROR_BAD_PATHNAME: u32 = 161;
+
+/// The guest path of a shell folder (`CSIDL_*`).
+///
+/// Inside an AnyOS environment these are the folders the environment created on
+/// `C:`; when a program runs outside one they are the host's own home,
+/// application-data and temporary directories on `Z:`. A folder with no file
+/// system path of its own (the network neighbourhood, printers, the control
+/// panel) gets `None`, where Windows fails the call too.
+fn shell_folder(t: &Thread<'_, '_>, csidl: u32) -> Option<String> {
+    let var = |name: &str| crate::sysinfo::env_var(t, name);
+    let profile = var("USERPROFILE").unwrap_or_else(|| r"C:\Users\User".to_string());
+    let roaming = var("APPDATA").unwrap_or_else(|| format!(r"{profile}\AppData\Roaming"));
+    let local = var("LOCALAPPDATA").unwrap_or_else(|| format!(r"{profile}\AppData\Local"));
+    let program_data = var("ProgramData").unwrap_or_else(|| r"C:\ProgramData".to_string());
+    let program_files = var("ProgramFiles").unwrap_or_else(|| r"C:\Program Files".to_string());
+    let program_files_x86 =
+        var("ProgramFiles(x86)").unwrap_or_else(|| r"C:\Program Files (x86)".to_string());
+    let windows = var("SystemRoot")
+        .or_else(|| var("windir"))
+        .unwrap_or_else(|| r"C:\Windows".to_string());
+    let public = var("PUBLIC").unwrap_or_else(|| r"C:\Users\Public".to_string());
+    let menu = |base: &str| format!(r"{base}\Microsoft\Windows\Start Menu");
+    Some(match csidl & 0xFF {
+        0x00 | 0x10 => format!(r"{profile}\Desktop"),
+        0x02 => format!(r"{}\Programs", menu(&roaming)),
+        0x05 => format!(r"{profile}\Documents"),
+        0x06 => format!(r"{profile}\Favorites"),
+        0x07 => format!(r"{}\Programs\Startup", menu(&roaming)),
+        0x08 => format!(r"{roaming}\Microsoft\Windows\Recent"),
+        0x09 => format!(r"{roaming}\Microsoft\Windows\SendTo"),
+        0x0B => menu(&roaming),
+        0x0D => format!(r"{profile}\Music"),
+        0x0E => format!(r"{profile}\Videos"),
+        0x14 => format!(r"{windows}\Fonts"),
+        0x15 => format!(r"{roaming}\Microsoft\Windows\Templates"),
+        0x16 => menu(&program_data),
+        0x17 => format!(r"{}\Programs", menu(&program_data)),
+        0x18 | 0x1E => format!(r"{}\Programs\Startup", menu(&program_data)),
+        0x19 => format!(r"{public}\Desktop"),
+        0x1A => roaming,
+        0x1B => format!(r"{profile}\PrintHood"),
+        0x1C => local,
+        0x1F => format!(r"{program_data}\Favorites"),
+        0x20 => format!(r"{local}\Microsoft\Windows\INetCache"),
+        0x21 => format!(r"{roaming}\Microsoft\Windows\Cookies"),
+        0x22 => format!(r"{local}\Microsoft\Windows\History"),
+        0x23 => program_data,
+        0x24 => windows,
+        0x25 => format!(r"{windows}\System32"),
+        0x26 => program_files,
+        0x27 => format!(r"{profile}\Pictures"),
+        0x28 => profile,
+        0x29 => format!(r"{windows}\SysWOW64"),
+        0x2A => program_files_x86,
+        0x2B => format!(r"{program_files}\Common Files"),
+        0x2C => format!(r"{program_files_x86}\Common Files"),
+        0x2D => format!(r"{program_data}\Templates"),
+        0x2E => format!(r"{public}\Documents"),
+        0x2F => format!(r"{}\Programs\Administrative Tools", menu(&program_data)),
+        0x30 => format!(r"{}\Programs\Administrative Tools", menu(&roaming)),
+        0x35 => format!(r"{public}\Music"),
+        0x36 => format!(r"{public}\Pictures"),
+        0x37 => format!(r"{public}\Videos"),
+        0x3B => format!(r"{local}\Microsoft\Windows\Burn\Burn"),
+        _ => return None,
+    })
+}
+
+/// Makes a shell folder, the way `CSIDL_FLAG_CREATE` and `fCreate` ask for. A
+/// folder the host cannot create stays missing: the caller then fails to write
+/// into it, as on Windows, instead of being told about a folder that is not
+/// there.
+fn make_shell_folder(t: &Thread<'_, '_>, folder: &str) -> bool {
+    let Some(host) = crate::file::host_path(t, folder) else {
+        return false;
+    };
+    host.is_dir() || std::fs::create_dir_all(&host).is_ok()
+}
+
 fn sh_get_folder_path(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let path_ptr = a[2];
-    let s = r"C:\Users\User\AppData\Roaming";
-    let (_, overflow) = copy_str_truncate(t, path_ptr, 260, s, wide);
-    if overflow {
-        fail(t, ERROR_INSUFFICIENT_BUFFER, 1)
-    } else {
-        Ok(0)
+    // HRESULT SHGetFolderPathW(HWND, int csidl, HANDLE token, DWORD flags, LPWSTR path)
+    // `dwFlags` is reserved: Windows requires it to be 0 and reads it as nothing.
+    let (csidl, path) = (a[1] as u32, a[4]);
+    if path == 0 {
+        return fail(t, ERROR_INVALID_PARAMETER, E_INVALIDARG);
     }
+    let Some(folder) = shell_folder(t, csidl) else {
+        return fail(t, ERROR_INVALID_PARAMETER, E_INVALIDARG);
+    };
+    if csidl & CSIDL_FLAG_CREATE != 0 {
+        make_shell_folder(t, &folder);
+    }
+    if char_len(&folder, wide) + 1 > SHELL_FOLDER_CHARS {
+        return fail(t, ERROR_INSUFFICIENT_BUFFER, E_INSUFFICIENT_BUFFER);
+    }
+    if !write_bytes(t, path, &encode(&folder, wide)) {
+        return fail(t, ERROR_NOACCESS, E_INVALIDARG);
+    }
+    Ok(0) // S_OK
 }
 
 fn sh_get_special_folder_path(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
-    let path_ptr = a[1];
-    let s = r"C:\Users\User\AppData\Roaming";
-    let (_, overflow) = copy_str_truncate(t, path_ptr, 260, s, wide);
-    Ok(!overflow as u64)
+    // BOOL SHGetSpecialFolderPathW(HWND, LPWSTR path, int csidl, BOOL create)
+    let (path, csidl, create) = (a[1], a[2] as u32, a[3] != 0);
+    let Some(folder) = shell_folder(t, csidl) else {
+        return Ok(0);
+    };
+    if create || csidl & CSIDL_FLAG_CREATE != 0 {
+        make_shell_folder(t, &folder);
+    }
+    Ok((path != 0 && write_bytes(t, path, &encode(&folder, wide))) as u64)
+}
+
+fn sh_create_directory_ex(t: &mut Thread<'_, '_>, a: &[u64], wide: bool) -> Result<u64, Halt> {
+    // int SHCreateDirectoryExW(HWND, LPCWSTR path, const SECURITY_ATTRIBUTES *)
+    let Some(name) = (a[1] != 0).then(|| read_str(t, a[1], wide)).flatten() else {
+        return Ok(ERROR_BAD_PATHNAME as u64);
+    };
+    if !(name.contains(':') || name.starts_with(r"\\")) {
+        return Ok(ERROR_BAD_PATHNAME as u64);
+    }
+    let full = crate::file::full_path(t, &name);
+    let Some(host) = crate::file::host_path(t, &full) else {
+        return Ok(ERROR_PATH_NOT_FOUND as u64);
+    };
+    if host.is_dir() {
+        return Ok(ERROR_ALREADY_EXISTS as u64);
+    }
+    match std::fs::create_dir_all(&host) {
+        Ok(()) => Ok(0), // ERROR_SUCCESS
+        Err(e) => Ok(crate::file::io_error(&e, &host) as u64),
+    }
 }
 
 fn get_open_file_name(_t: &mut Thread<'_, '_>, _a: &[u64]) -> Result<u64, Halt> {
@@ -1977,8 +2356,12 @@ pub(crate) static APIS: &[Api] = &[
     shell("SHGetPathFromIDListW", 2, sh_get_path_from_id_list),
     shell("SHBrowseForFolderA", 1, sh_browse_for_folder),
     shell("SHBrowseForFolderW", 1, sh_browse_for_folder),
-    shell("SHCreateDirectoryExA", 3, |_, _| Ok(0)),
-    shell("SHCreateDirectoryExW", 3, |_, _| Ok(0)),
+    shell("SHCreateDirectoryExA", 3, |t, a| {
+        sh_create_directory_ex(t, a, false)
+    }),
+    shell("SHCreateDirectoryExW", 3, |t, a| {
+        sh_create_directory_ex(t, a, true)
+    }),
     shell("SHFileOperationA", 1, |_, _| Ok(0)),
     shell("SHFileOperationW", 1, |_, _| Ok(0)),
     shell("SHGetFileInfoA", 5, |_, _| Ok(1)),

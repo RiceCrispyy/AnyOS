@@ -28,6 +28,16 @@ pub(crate) const EXCEPTION_CONTINUE_EXECUTION: u64 = 0;
 /// This handler is not interested; try the next one in the chain.
 pub(crate) const _EXCEPTION_CONTINUE_SEARCH: u64 = 1;
 
+/// `EXCEPTION_UNWINDING`: the handler is called as the exception leaves its
+/// frame, so it should run the frame's `finally` code and keep searching.
+const EXCEPTION_UNWINDING: u32 = 0x02;
+/// `EXCEPTION_EXIT_UNWIND`: `RtlUnwind` was called with no target frame, so the
+/// thread is leaving every frame.
+const EXCEPTION_EXIT_UNWIND: u32 = 0x04;
+/// The record code used when a caller passes no `EXCEPTION_RECORD` to
+/// [`unwind_32`].
+const STATUS_UNWIND: u32 = 0xC000_0027;
+
 // ---------------------------------------------------------------------------
 // EXCEPTION_RECORD layout (32-bit, flat offsets in bytes).
 // ---------------------------------------------------------------------------
@@ -209,6 +219,7 @@ pub(crate) fn dispatch_exception_32(
             Ok(v) => v,
             Err(Halt::Exit(code)) => return Err(Halt::Exit(code)),
             Err(Halt::ExitThread(code)) => return Err(Halt::ExitThread(code)),
+            Err(Halt::DirectResume) => return Err(Halt::DirectResume),
             Err(_) => {
                 // Handler faulted or called an unimplemented API; skip it.
                 frame = next;
@@ -236,4 +247,106 @@ pub(crate) fn dispatch_exception_32(
         location: t.describe(exception_addr),
     }
     .into())
+}
+
+/// x86 `RtlCaptureContext(ContextRecord)`: the calling thread's registers.
+///
+/// The capture is taken where the thread is, so a handler that resumes from it
+/// continues at the call rather than after it; the fields a `CONTEXT` needs to
+/// be usable as a resumption point are all filled in.
+pub(crate) fn capture_context_32(t: &mut Thread<'_, '_>, addr: u64) -> bool {
+    write_context_32(t, addr)
+}
+
+/// x86 `RtlUnwind(TargetFrame, TargetIp, ExceptionRecord, ReturnValue)`.
+///
+/// Windows walks the registration chain from its head, calls the handler of
+/// every frame *inside* `target_frame` with `EXCEPTION_UNWINDING` set (so their
+/// `finally` code runs) and pops those frames off the chain. The target frame's
+/// own handler is *not* called, and the thread then carries on as if `RtlUnwind`
+/// had returned, with `return_value` in `EAX` -- which is what Delphi's RTL
+/// expects, since it passes the address just after its own `call RtlUnwind` as
+/// `TargetIp`. `TargetIp` itself is unused here, the way Wine and ReactOS also
+/// ignore it.
+///
+/// A handler that answers `ExceptionContinueExecution` has installed a new
+/// `CONTEXT`; the thread resumes from it instead, which is how an exception
+/// ends up inside the matching `except` block.
+///
+/// Where Windows would leave the thread raised, a `target_frame` that is null
+/// or missing from the chain unwinds what it can and returns -- the same choice
+/// Wine makes, and what a guest on its way to `ExitProcess` wants.
+pub(crate) fn unwind_32(
+    t: &mut Thread<'_, '_>,
+    target_frame: u64,
+    record: u64,
+    return_value: u64,
+) -> Result<u64, Halt> {
+    let sp = t.ctx.regs[x86_reg::RSP];
+    let ctx_addr = (sp.saturating_sub(0x1000 + ctx32::SIZE)) & !0xF;
+    let exc_addr = (ctx_addr.saturating_sub(EXCEPTION_RECORD_32_SIZE + 0x10)) & !0xF;
+
+    // The unwinding flags go on a copy; the caller's record is left alone.
+    let (code, mut flags, exception_addr, params) = if record != 0 {
+        let code = read_u32(t, record).unwrap_or(0);
+        let flags = read_u32(t, record + 0x04).unwrap_or(0);
+        let address = read_u32(t, record + 0x0C).unwrap_or(0) as u64;
+        let n = read_u32(t, record + 0x10)
+            .unwrap_or(0)
+            .min(EXCEPTION_MAXIMUM_PARAMETERS as u32);
+        let params: Vec<u64> = (0..n)
+            .map(|i| read_u32(t, record + 0x14 + i as u64 * 4).unwrap_or(0) as u64)
+            .collect();
+        (code, flags, address, params)
+    } else {
+        (STATUS_UNWIND, 0, t.ctx.rip, Vec::new())
+    };
+    flags |= EXCEPTION_UNWINDING;
+    if target_frame == 0 {
+        flags |= EXCEPTION_EXIT_UNWIND;
+    }
+    // Windows gives the handlers a `CONTEXT` to continue with, already holding
+    // the return value in `EAX`.
+    t.ctx.regs[x86_reg::RAX] = return_value;
+    if !write_exception_record_32(t, exc_addr, code, flags, exception_addr, &params)
+        || !write_context_32(t, ctx_addr)
+    {
+        return Err(RunError::GuestException {
+            code,
+            location: t.describe(exception_addr),
+        }
+        .into());
+    }
+
+    let mut frame = read_u32(t, t.teb).unwrap_or(0xFFFF_FFFF) as u64;
+    let mut iterations = 0usize;
+    while frame != 0 && frame != 0xFFFF_FFFF && frame != target_frame {
+        iterations += 1;
+        if iterations > 256 {
+            // Corrupt / infinite chain; unwound what was readable.
+            break;
+        }
+        let next = read_u32(t, frame).unwrap_or(0xFFFF_FFFF) as u64;
+        let handler = read_u32(t, frame + 4).unwrap_or(0) as u64;
+        if handler != 0 {
+            match t.call(handler, &[exc_addr, frame, ctx_addr, 0]) {
+                Ok(v) if v & 0xFFFF_FFFF == EXCEPTION_CONTINUE_EXECUTION => {
+                    // The handler set up the context to continue in.
+                    read_context_32(t, ctx_addr);
+                    return Err(Halt::DirectResume);
+                }
+                Ok(_) => {}
+                Err(Halt::Exit(code)) => return Err(Halt::Exit(code)),
+                Err(Halt::ExitThread(code)) => return Err(Halt::ExitThread(code)),
+                Err(Halt::DirectResume) => return Err(Halt::DirectResume),
+                // A handler that faulted or called an unimplemented API is left
+                // alone, as in the search walk above.
+                Err(_) => {}
+            }
+        }
+        // The frame has been unwound, so it leaves the chain.
+        write_u32(t, t.teb, next as u32);
+        frame = next;
+    }
+    Ok(return_value)
 }

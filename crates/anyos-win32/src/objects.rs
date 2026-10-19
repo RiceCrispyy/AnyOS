@@ -18,6 +18,7 @@ use crate::memory::Reservation;
 use crate::process::ChildProcess;
 use crate::thread::Thread;
 use crate::ui::UiState;
+use anyos_ui::UIManager;
 
 pub(crate) enum Object {
     Event {
@@ -83,7 +84,6 @@ struct Slot {
 }
 
 /// The process-wide state the Windows personality keeps besides threads.
-#[derive(Default)]
 pub(crate) struct Kernel {
     slots: Vec<Option<Slot>>,
     handles: BTreeMap<u32, usize>,
@@ -113,6 +113,10 @@ pub(crate) struct Kernel {
     pub thread_locale: u32,
     pub priority_class: u32,
     pub ui: UiState,
+    /// Universal UI manager for the platform
+    pub ui_manager: UIManager,
+    /// Mapping from Win32 HWNDs to UIBackend WindowHandles
+    pub hwnd_map: HashMap<u64, anyos_ui::WindowHandle>,
     /// Handle of the fiber the current thread is running as (0 = none).
     pub current_fiber: u64,
     /// Named pipes registered by CreateNamedPipe: pipe name -> server handle.
@@ -123,6 +127,41 @@ pub(crate) struct Kernel {
 /// stay clear of the console handles, the pseudo handles (-1, -2) and
 /// `INVALID_HANDLE_VALUE`.
 const FIRST_HANDLE: u32 = 0x100;
+
+impl Default for Kernel {
+    fn default() -> Self {
+        Self {
+            slots: Vec::new(),
+            handles: BTreeMap::new(),
+            names: HashMap::new(),
+            next_handle: 0,
+            heaps: Vec::new(),
+            process_heap: 0,
+            reservations: BTreeMap::new(),
+            views: BTreeMap::new(),
+            tls_used: Vec::new(),
+            fls: Vec::new(),
+            env: Vec::new(),
+            cwd: String::new(),
+            std_override: HashMap::new(),
+            atoms: Vec::new(),
+            registry: anyos_env::Registry::default(),
+            registry_dirty: false,
+            reg_keys: HashMap::new(),
+            next_reg_key: 0,
+            unhandled_filter: 0,
+            console_title: String::new(),
+            console_mode: HashMap::new(),
+            thread_locale: 0,
+            priority_class: 0,
+            ui: UiState::default(),
+            ui_manager: UIManager::new(),
+            hwnd_map: HashMap::new(),
+            current_fiber: 0,
+            named_pipes: HashMap::new(),
+        }
+    }
+}
 
 impl Kernel {
     /// Add `obj` and return a new handle to it.

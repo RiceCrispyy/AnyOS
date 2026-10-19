@@ -243,7 +243,7 @@ pub fn load(space: &mut AddressSpace, bytes: &[u8]) -> Result<LoadedElf, ElfErro
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-fn parse(bytes: &[u8]) -> Result<Elf<'_>, ElfError> {
+pub fn parse(bytes: &[u8]) -> Result<Elf<'_>, ElfError> {
     if bytes.len() < 4 || &bytes[..4] != b"\x7fELF" {
         return Err(ElfError::NotElf);
     }
