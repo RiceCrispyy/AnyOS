@@ -1,5 +1,11 @@
 /target
 *.whl
-anyos/Launcher
 build/
 /scalarDiagnostics/
+
+# SwiftPM build products
+.build/
+
+# scripts/bundle_launcher.py writes the assembled bundle into the package
+anyos/Launcher/Contents/
+anyos/Launcher/*.app

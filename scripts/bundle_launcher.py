@@ -48,11 +48,19 @@ def main() -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
-    # 4. Give the app a self-contained name.
+    # 4. Give the app a self-contained name. Copy rather than move: LAUNCHER is
+    #    the SwiftPM package (Package.swift, Sources, Tests) and moving it would
+    #    delete the sources that `swift build` and `swift test` need.
     app = LAUNCHER / "AnyOSLauncher.app"
     if app.exists():
         shutil.rmtree(app)
-    shutil.move(str(LAUNCHER), str(app))
+    shutil.copytree(
+        LAUNCHER,
+        app,
+        ignore=shutil.ignore_patterns(
+            "Package.swift", "Sources", "Tests", ".build", "*.app"
+        ),
+    )
 
     print(f"Bundled {BUNDLE / 'anyos'} -> {app}")
     print(f"Bundled binaries:{' '.join(p.name for p in RESOURCE_BIN.iterdir())}")

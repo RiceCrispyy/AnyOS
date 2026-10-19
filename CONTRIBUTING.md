@@ -5,10 +5,18 @@ SDK from Xcode Command Line Tools, so a full Xcode.app install is not required.
 
 ```sh
 cd anyos/Launcher
-xcodebuild -scheme AnyOSLauncher -configuration Debug
+swift build
+swift test
 ```
 
-That produces `build/AnyOSLauncher.app`.
+`swift build` produces `.build/debug/AnyOSLauncher`; `swift test` runs the
+launcher's XCTest suite, which covers argument splitting, host-path handling
+and locate-the-bundled-`anyos` logic without needing the app bundle. The
+`.app` around that executable is assembled by `scripts/bundle_launcher.py`.
+
+`swift build` and `swift test` need only Xcode Command Line Tools. They are
+what CI runs on `macos-latest`; an Xcode project and a full Xcode.app install
+are not required.
 
 `scripts/bundle_launcher.py` copies `target/release/anyos` into
 `anyos/Launcher/Contents/MacOS/`, copies the fixtures into

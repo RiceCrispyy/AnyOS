@@ -29,7 +29,14 @@ jobs:
         run: |
           rustc --version
           cargo --version
+          swift --version
           echo "HOST: $(uname -m)"
+
+      - name: Build launcher (SwiftPM)
+        run: swift build --package-path anyos/Launcher
+
+      - name: Test launcher (SwiftPM)
+        run: swift test --package-path anyos/Launcher
 
       - name: Build workspace for aarch64-apple-darwin
         run: cargo build --release --workspace --target aarch64-apple-darwin
