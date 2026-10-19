@@ -16,6 +16,7 @@ members = [
     "crates/anyos-interp",
     "crates/anyos-win32",
     "apps/anyos-cli",
+    "apps/anyos-gui",
 ]
 
 [workspace.package]
@@ -56,6 +57,9 @@ tar = "0.4"
 xz2 = "0.1"
 zstd = { version = "0.14", default-features = false }
 xara = "0.4"
+# GUI: glow (OpenGL) instead of the default wgpu keeps the app small and quick to build.
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.17"
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
 
 [profile.release]

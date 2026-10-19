@@ -18,8 +18,24 @@ per-program network redirects. See [docs/architecture.md](docs/architecture.md).
 Prebuilt `anyos` binaries for Linux (x86-64), Windows (x86-64) and macOS
 (universal, Apple Silicon and Intel) are attached to each
 [GitHub release](https://github.com/RiceCrispyy/AnyOS/releases). Unpack the
-archive and run `anyos` from a terminal. The binaries are not signed yet, so
-Windows SmartScreen and macOS Gatekeeper may ask you to confirm the first launch.
+archive and run `anyos` from a terminal, or open the desktop app (`AnyOS.app` on
+macOS, `anyos-gui` elsewhere). The binaries are not signed yet, so Windows
+SmartScreen and macOS Gatekeeper may ask you to confirm the first launch.
+
+## Desktop app
+
+`anyos-gui` is the point-and-click way in. Drop a program onto the window (or
+choose one), and it shows what the program is, which OS and CPU it was built for,
+and how AnyOS would run it on this computer. Then press **Run** and watch its
+output, or **Stop** it. Installers get an **Install** button instead, and programs
+built for this computer start directly. It works on macOS, Windows and Linux, and
+runs programs through the `anyos` tool that ships beside it, so a crashing program
+cannot take the window down.
+
+```sh
+cargo run --release -p anyos-gui                 # empty window: drop a program in
+cargo run --release -p anyos-gui -- app.exe      # open a program straight away
+```
 
 ## Quick start
 
@@ -100,6 +116,7 @@ crates/anyos-package  installer and package identification (NSIS, Inno, MSI, .de
 crates/anyos-env      environments: private C: drive, registry, installed-app index
 crates/anyos-install  installs MSI, ZIP and 7-Zip packages into an environment
 apps/anyos-cli        the `anyos` command
+apps/anyos-gui        desktop app: pick a program, see its format and run plan, run it
 tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux and macOS + build scripts
 docs/architecture.md  design, interfaces, security model, roadmap
 ```

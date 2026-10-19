@@ -1,0 +1,19 @@
+[package]
+name = "anyos-gui"
+description = "AnyOS desktop app: pick a program, see how AnyOS would run it, and run it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "anyos-gui"
+path = "src/main.rs"
+
+[dependencies]
+anyos-pe.workspace = true
+anyos-format.workspace = true
+anyos-package.workspace = true
+eframe.workspace = true
+rfd.workspace = true

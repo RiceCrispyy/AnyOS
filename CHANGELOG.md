@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 **Added**
 
+- `anyos-gui` — a desktop app for macOS, Windows and Linux (egui). Drop or choose
+  a program (Windows `.exe`, Linux ELF, macOS Mach-O or `.app`, installers) to see
+  its format, target OS and CPU and how AnyOS would run it, then run it and watch
+  its output, with Stop and an option to log Windows API calls. Release archives
+  include it, as `AnyOS.app` on macOS.
 - `anyos run app.exe` — run Windows x86 and x64 console programs on a portable
   interpreter (`anyos-interp`) on any host, including Apple Silicon Macs. Windows
   API calls go through the call gate to Rust implementations (`anyos-win32`);
