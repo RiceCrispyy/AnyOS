@@ -73,6 +73,29 @@ impl Updater {
         let State::Available(u) = &self.state else {
             return;
         };
+
+        // On macOS, App Translocation mounts the .app read-only under a
+        // private/var/folders/.../AppTranslocation/... path when the bundle is
+        // run from outside /Applications.  Writing the staging directory next
+        // to the bundle fails with "Read-only file system (os error 30)".
+        // Detect this early and guide the user rather than showing a cryptic
+        // OS error.
+        #[cfg(target_os = "macos")]
+        if let Ok(exe) = std::env::current_exe() {
+            if exe.components().any(|c| {
+                c.as_os_str()
+                    .to_str()
+                    .map(|s| s == "AppTranslocation")
+                    .unwrap_or(false)
+            }) {
+                self.state = State::Failed(
+                    "AnyOS is running from a quarantined location (App Translocation). \
+                     Move AnyOS.app to your Applications folder, then reopen it and try updating again."
+                        .to_string(),
+                );
+                return;
+            }
+        }
         let u = u.clone();
         self.state = State::Downloading {
             version: u.version.to_string(),
