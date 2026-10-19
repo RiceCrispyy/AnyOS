@@ -902,6 +902,9 @@ pub(crate) static APIS: &[Api] = &[
         let n = t.k.handle_count() as u32 + 3;
         Ok(u64::from(store_u32(t, a[1], n)))
     }),
+    // Legacy 16-bit-era API: the handle count it set no longer exists, so the
+    // real one just echoes the requested count back (the CRT calls it at start).
+    k32("SetHandleCount", 1, |_, a| Ok(a[0])),
     k32("GetProcessWorkingSetSize", 3, |t, a| {
         store_ptr(t, a[1], 200 * 4096);
         store_ptr(t, a[2], 1380 * 4096);
