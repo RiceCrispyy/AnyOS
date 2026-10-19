@@ -157,7 +157,7 @@ static CORE: &[Api] = &[
 ];
 
 /// Every table of implementations, searched in order.
-fn tables() -> [&'static [Api]; 14] {
+fn tables() -> [&'static [Api]; 15] {
     [
         CORE,
         crate::console::APIS,
@@ -173,6 +173,7 @@ fn tables() -> [&'static [Api]; 14] {
         crate::resource::APIS,
         crate::strings::USER32,
         crate::sysinfo::ADVAPI32,
+        crate::ui::APIS,
     ]
 }
 

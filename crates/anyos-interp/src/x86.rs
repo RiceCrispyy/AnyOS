@@ -10,6 +10,8 @@ use anyos_memory::{Access, AddressSpace, MemoryError, PAGE_SIZE};
 
 use crate::sse;
 
+mod x87;
+
 type R<T> = Result<T, GuestFault>;
 
 const CF: u64 = 1;
@@ -1053,7 +1055,7 @@ impl Insn<'_> {
                     vector,
                 });
             }
-            0xD8..=0xDF => return Err(self.unsupported("x87 floating point")),
+            0xD8..=0xDF => return self.x87(op),
             0xE0..=0xE3 => {
                 let rel = self.i8()?;
                 let am = self.addr_mask();
@@ -1222,7 +1224,9 @@ impl Insn<'_> {
                 let (sub, rm) = self.modrm()?;
                 match (sub & 7, rm) {
                     (5..=7, Rm::Reg(_)) => {} // lfence, mfence, sfence
-                    _ => return Err(self.unsupported("fxsave/ldmxcsr family")),
+                    (0..=3, Rm::Mem { .. }) => self.fxsave_group(sub & 7, rm)?,
+                    (7, Rm::Mem { .. }) => {} // clflush
+                    _ => return Err(self.unsupported("xsave family")),
                 }
             }
             0xAF => {
@@ -1335,12 +1339,12 @@ impl Insn<'_> {
         let (a, b, c, d) = match leaf {
             // Highest leaf 1; vendor "AnyOSAnyOSIn" as EBX, EDX, ECX.
             0 => (1, 0x4F79_6E41, 0x6E49_534F, 0x796E_4153),
-            // Family 6. EDX: TSC, CX8, CMOV, SSE, SSE2. No x87 (not emulated).
+            // Family 6. EDX: FPU, TSC, CX8, CMOV, FXSR, SSE, SSE2.
             1 => (
                 0x0000_0600,
                 0,
                 0,
-                (1 << 4) | (1 << 8) | (1 << 15) | (1 << 25) | (1 << 26),
+                1 | (1 << 4) | (1 << 8) | (1 << 15) | (1 << 24) | (1 << 25) | (1 << 26),
             ),
             _ => (0, 0, 0, 0),
         };

@@ -32,6 +32,7 @@ mod sync;
 mod sysinfo;
 mod thread;
 mod time;
+mod ui;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

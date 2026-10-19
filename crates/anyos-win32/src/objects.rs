@@ -13,6 +13,7 @@ use crate::heap::Heap;
 use crate::memory::Reservation;
 use crate::process::ChildProcess;
 use crate::thread::Thread;
+use crate::ui::UiState;
 
 pub(crate) enum Object {
     Event {
@@ -85,6 +86,7 @@ pub(crate) struct Kernel {
     pub console_mode: HashMap<u64, u32>,
     pub thread_locale: u32,
     pub priority_class: u32,
+    pub ui: UiState,
 }
 
 /// First handle value handed out. Real Windows hands out multiples of 4; these

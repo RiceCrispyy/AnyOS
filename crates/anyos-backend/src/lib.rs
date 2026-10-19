@@ -55,8 +55,58 @@ pub struct X86Context {
     /// Base of the `gs` segment (the TEB on 64-bit Windows).
     pub gs_base: u64,
     pub xmm: [u128; 16],
+    /// x87 registers and the control/status words, plus MXCSR.
+    pub fpu: X87State,
     /// `true` for x86-64, `false` for 32-bit x86.
     pub long_mode: bool,
+}
+
+/// An 80-bit x87 extended-precision value: a 64-bit significand with an
+/// explicit integer bit, and the sign and 15-bit exponent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct F80 {
+    pub mant: u64,
+    pub sign_exp: u16,
+}
+
+/// Floating-point unit state of an x86 thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct X87State {
+    /// Physical registers R0..R7; `st(i)` is `regs[(top + i) % 8]`.
+    pub regs: [F80; 8],
+    pub top: u8,
+    /// Bit `n` set: physical register `n` is empty.
+    pub empty: u8,
+    pub control: u16,
+    /// Status word without the TOP field (bits 11-13).
+    pub status: u16,
+    pub mxcsr: u32,
+}
+
+impl X87State {
+    /// The state Windows gives a new thread: all registers empty, 53-bit
+    /// precision, every exception masked.
+    pub fn new() -> Self {
+        X87State {
+            regs: [F80::default(); 8],
+            top: 0,
+            empty: 0xFF,
+            control: 0x27F,
+            status: 0,
+            mxcsr: 0x1F80,
+        }
+    }
+
+    /// The status word including TOP.
+    pub fn status_word(&self) -> u16 {
+        (self.status & !0x3800) | ((self.top as u16 & 7) << 11)
+    }
+}
+
+impl Default for X87State {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl X86Context {
@@ -71,6 +121,7 @@ impl X86Context {
             fs_base: 0,
             gs_base: 0,
             xmm: [0; 16],
+            fpu: X87State::new(),
             long_mode,
         }
     }
