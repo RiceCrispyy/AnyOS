@@ -17,9 +17,15 @@
 //! * `anyos redirect ...` edits a program's own network redirects, stored in
 //!   `<program>.anyos.toml` beside it. They apply only to that program when AnyOS
 //!   runs it; the host's hosts file and DNS are never touched.
+//! * `anyos update` installs the newest AnyOS release from GitHub (checked
+//!   against its SHA-256), replacing this copy and the app beside it. Release
+//!   builds also check once a day after a command and mention a new version
+//!   on stderr; `--no-update-check` or `ANYOS_NO_UPDATE_CHECK=1` turns that off.
 
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyos_env::{AppRecord, Env};
 use anyos_exec::{run as exec_run, RunOptions};
@@ -37,10 +43,13 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "anyos",
-    version,
+    version = anyos_update::current_version(),
     about = "AnyOS: run programs from any OS on any OS (inspector and loader preview)"
 )]
 struct Cli {
+    /// Do not look for a newer AnyOS release after this command.
+    #[arg(long, global = true)]
+    no_update_check: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -68,6 +77,19 @@ enum Command {
     Uninstall(UninstallArgs),
     /// List environments, or show where one lives.
     Env(EnvArgs),
+    /// Update AnyOS to the newest release.
+    ///
+    /// Downloads this platform's release from GitHub, checks its SHA-256
+    /// against the release's SHA256SUMS, and replaces this copy of anyos and
+    /// the AnyOS app installed beside it (the whole AnyOS.app on macOS).
+    Update(UpdateArgs),
+}
+
+#[derive(Args)]
+struct UpdateArgs {
+    /// Only say whether a newer release exists; install nothing.
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Args)]
@@ -209,6 +231,10 @@ fn main() -> ExitCode {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
     let cli = Cli::parse();
+    if let Ok(layout) = anyos_update::Layout::current() {
+        anyos_update::cleanup_leftovers(&layout);
+    }
+    let check_after = !cli.no_update_check && !matches!(cli.command, Command::Update(_));
     let result = match cli.command {
         Command::Inspect(a) => inspect(a),
         Command::Load(a) => load(a),
@@ -218,7 +244,11 @@ fn main() -> ExitCode {
         Command::Apps(a) => list_apps(a),
         Command::Uninstall(a) => uninstall_app(a),
         Command::Env(a) => env_info(a),
+        Command::Update(a) => update(a),
     };
+    if check_after {
+        update_notice();
+    }
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
@@ -226,6 +256,88 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn update_cache() -> Option<anyos_update::CheckCache> {
+    let dir = anyos_env::data_dir().ok()?;
+    Some(anyos_update::CheckCache::new(dir.join("update-check")))
+}
+
+/// Once a day, in release builds and only when someone is watching stderr,
+/// asks GitHub for the latest release and mentions it if it is newer.
+fn update_notice() {
+    if !anyos_update::auto_check_enabled() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    let Some(cache) = update_cache() else { return };
+    if cache.is_due() {
+        match anyos_update::check(Duration::from_secs(3)) {
+            Ok(u) => cache.record(u.as_ref().map(|u| &u.version)),
+            // Offline: keep what we knew and try again tomorrow.
+            Err(_) => cache.record(cache.newer_version().as_ref()),
+        }
+    }
+    if let Some(v) = cache.newer_version() {
+        eprintln!(
+            "\nanyos: AnyOS {v} is available (this is {}). Run `anyos update` to install it.",
+            anyos_update::current_version()
+        );
+    }
+}
+
+fn update(a: UpdateArgs) -> Result<(), String> {
+    let current = anyos_update::current_version();
+    println!("AnyOS {current}: checking for a newer release...");
+    let found = anyos_update::check(Duration::from_secs(30)).map_err(|e| e.to_string())?;
+    if let Some(cache) = update_cache() {
+        cache.record(found.as_ref().map(|u| &u.version));
+    }
+    let Some(u) = found else {
+        println!("This is the latest version.");
+        return Ok(());
+    };
+    println!("AnyOS {} is available: {}", u.version, u.page_url);
+    if a.check {
+        println!("Run `anyos update` to install it.");
+        return Ok(());
+    }
+    if !anyos_update::is_release_build() {
+        eprintln!("note: this is a local build; it will be replaced by the release build.");
+    }
+
+    let show = std::io::stderr().is_terminal();
+    let mut last_pct = None;
+    let installed = anyos_update::install(&u, |done, total| {
+        let Some(total) = total.filter(|t| *t > 0 && show) else {
+            return;
+        };
+        let pct = done * 100 / total;
+        if last_pct != Some(pct) {
+            last_pct = Some(pct);
+            eprint!("\rDownloading {} ... {pct}%", u.archive_name);
+            let _ = std::io::stderr().flush();
+        }
+    });
+    if last_pct.is_some() {
+        eprintln!();
+    }
+    let installed = installed.map_err(|e| {
+        if e.is_permission_denied() {
+            format!(
+                "{e}\nAnyOS is installed in a folder you cannot write to; \
+                 run the update again as an administrator (e.g. with sudo)."
+            )
+        } else {
+            e.to_string()
+        }
+    })?;
+    println!(
+        "Updated to AnyOS {} in {} ({}).",
+        installed.version,
+        installed.layout.dir.display(),
+        installed.replaced.join(", ")
+    );
+    Ok(())
 }
 
 fn run_guest(a: RunArgs) -> Result<(), String> {

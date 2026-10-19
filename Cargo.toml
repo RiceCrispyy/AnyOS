@@ -15,6 +15,7 @@ members = [
     "crates/anyos-backend",
     "crates/anyos-interp",
     "crates/anyos-win32",
+    "crates/anyos-update",
     "apps/anyos-cli",
     "apps/anyos-gui",
 ]
@@ -41,6 +42,7 @@ anyos-install = { path = "crates/anyos-install" }
 anyos-backend = { path = "crates/anyos-backend" }
 anyos-interp = { path = "crates/anyos-interp" }
 anyos-win32 = { path = "crates/anyos-win32" }
+anyos-update = { path = "crates/anyos-update" }
 goblin = { version = "0.10", default-features = false, features = ["std", "pe32", "pe64", "elf32", "elf64"] }
 libc = "0.2"
 thiserror = "2"
@@ -60,6 +62,9 @@ xara = "0.4"
 # GUI: glow (OpenGL) instead of the default wgpu keeps the app small and quick to build.
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 rfd = "0.17"
+# Self-update: HTTPS with the OS certificate store, so proxies the OS trusts work too.
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+sha2 = "0.10"
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["bzip2", "deflate", "ppmd"] }
 
 [profile.release]

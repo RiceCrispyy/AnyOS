@@ -22,6 +22,25 @@ archive and run `anyos` from a terminal, or open the desktop app (`AnyOS.app` on
 macOS, `anyos-gui` elsewhere). The binaries are not signed yet, so Windows
 SmartScreen and macOS Gatekeeper may ask you to confirm the first launch.
 
+### Updating
+
+Release builds keep themselves up to date. The desktop app checks GitHub when it
+starts and offers **Update and restart** when a newer release is out (or press
+**Check for updates**). From a terminal:
+
+```sh
+anyos update           # download, verify and install the newest release
+anyos update --check   # only say whether there is one
+```
+
+The download is checked against the release's `SHA256SUMS` before anything is
+replaced. The update swaps in `anyos`, the app beside it, and on macOS the whole
+`AnyOS.app`. The CLI also looks once a day, after a command, and mentions a new
+version on stderr. Turn the automatic checks off with `--no-update-check` (CLI
+and app) or `ANYOS_NO_UPDATE_CHECK=1`. Builds you make yourself never check on
+their own. Releases up to v0.1.13 predate the updater, so install one newer
+release by hand first.
+
 ## Desktop app
 
 `anyos-gui` is the point-and-click way in. Drop a program onto the window (or
@@ -115,6 +134,7 @@ crates/anyos-net      per-program network policy (redirects) and the <program>.a
 crates/anyos-package  installer and package identification (NSIS, Inno, MSI, .deb, .pkg, ...)
 crates/anyos-env      environments: private C: drive, registry, installed-app index
 crates/anyos-install  installs MSI, ZIP and 7-Zip packages into an environment
+crates/anyos-update   self-update: latest GitHub release, SHA-256 check, in-place swap
 apps/anyos-cli        the `anyos` command
 apps/anyos-gui        desktop app: pick a program, see its format and run plan, run it
 tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux and macOS + build scripts
