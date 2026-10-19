@@ -1,0 +1,90 @@
+name: Build AnyOS for macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Universal2 covers Apple Silicon and Intel Macs with one binary.
+  MACOS_TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.MACOS_TARGETS }}
+
+      - name: Add macOS targets (idempotent)
+        run: |
+          rustup target add ${{ env.MACOS_TARGETS }}
+
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+          echo "HOST: $(uname -m)"
+
+      - name: Build anyos for macOS (universal2)
+        run: |
+          cargo build --release --target ${{ env.MACOS_TARGETS }}
+          llvm-lipo -create target/aarch64-apple-darwin/release/anyos target/x86_64-apple-darwin/release/anyos -output target/release/anyos
+          ls -l target/release/anyos
+
+      - name: Verify universal binary
+        run: |
+          lipo -info target/release/anyos
+
+      - name: Prepare marshalled universal2 binaries (target dirs kept separate)
+        run: |
+          mkdir -p target/macos-aarch64 target/macos-x86_64
+          cp target/aarch64-apple-darwin/release/anyos target/macos-aarch64/
+          cp target/x86_64-apple-darwin/release/anyos target/macos-x86_64/
+          ls -l target/macos-*
+
+      - name: Install SwiftPM (Xcode-free build of the launcher)
+        run: |
+          # SwiftPM ships with Xcode Command Line Tools on macOS runners.
+          swift --version
+
+      - name: Build the launcher with SwiftPM
+        run: |
+          cd anyos/Launcher
+         swift build -c release
+          cp .build/release/AnyOSLauncher build/AnyOSLauncher.app/Contents/MacOS/
+
+      - name: Run the launcher helper (smoke test)
+        run: |
+          ./build/AnyOSLauncher.app/Contents/MacOS/AnyOSLauncher --help
+
+      - name: Bundle the app for the user
+        run: |
+          python3 scripts/bundle_launcher.py
+          ls -laR anyos/Launcher | head -60
+
+      - name: Upload the built app
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: anyos-macos
+          path: anyos/Launcher/AnyOSLauncher.app
+          if-no-files-found: error
+
+      - name: Upload release notes
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          # Side-effect step for packaging; release notes live in
+          # RELEASE_NOTES_0_2_0.md when that file is added.
+          echo "Build artifact ready for release."

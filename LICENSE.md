@@ -1,5 +1,43 @@
 Required Notice: Copyright 2026 the owner of the AnyOS project (https://github.com/RiceCrispyy/AnyOS)
 
+# AnyOS 0.2.0
+
+AnyOS is a standalone Rust runtime that runs programs built for one OS on
+another, starting with Windows programs on macOS (then Linux and ChromeOS).
+It does not use Wine and does not need a VM. Milestones 1 and 2 are done: it
+can inspect Windows PE files and load them into an emulated guest process
+(map, relocate, bind imports, set up TLS), and it recognises Linux (ELF) and
+macOS (Mach-O) programs and says how it would run them, plus it keeps per-
+program network redirects. It cannot execute guest code yet.
+
+## Builds
+
+- Host: macOS. `cargo build --release` for `aarch64-apple-darwin` (Apple
+  Silicon) and `x86_64-apple-darwin` (Intel Mac), both with stable Rust
+  (`brew install rust`, or rustup).
+
+- macOS SDK toolchain (for building cross-target binaries on this host):
+  `xcrun --sdk macosx --find clang`, `xcrun --sdk macosx --find ld`,
+  `xcrun --sdk macosx --find llvm-dlltool`, `xcrun --sdk macosx --find llvm-lipo`.
+  These together with `llvm-tools` provide the cross-target assembler,
+  linker and lipo on this host. `linux-gnu` is a portable target; the
+  Apple targets are `-macosx` variants.
+
+## Layout
+
+```text
+crates/anyos-pe       PE/COFF inspection, DLL catalog, compatibility report (never executes)
+crates/anyos-memory   guest address space: regions, page protections, checked access
+crates/anyos-loader   process assembly: map, relocate, load DLLs, bind, TLS, protect; API call gate
+crates/anyos-format   format detection (PE, ELF, Mach-O incl. universal) and any-OS run plan
+crates/anyos-net      per-program network policy (redirects) and the <program>.anyos.toml profile
+apps/anyos-cli        the `anyos` command
+anyos/Launcher        macOS helper: sign and launch a macOS guest image from Xcode
+tests/fixtures        tiny test programs: Windows (x64, ARM64, x86), Linux, macOS + build scripts
+docs/architecture.md  design, interfaces, security model, roadmap
+```
+
+
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>

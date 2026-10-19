@@ -820,7 +820,7 @@ pub(crate) fn random_bytes(n: usize) -> Vec<u8> {
     buf
 }
 
-fn gen_random(t: &mut Thread<'_, '_>, buf: u64, len: u64) -> bool {
+pub(crate) fn gen_random(t: &mut Thread<'_, '_>, buf: u64, len: u64) -> bool {
     let len = len.min(1 << 20) as usize;
     let data = random_bytes(len);
     write_bytes(t, buf, &data)
@@ -975,6 +975,8 @@ pub(crate) static APIS: &[Api] = &[
 ];
 
 /// advapi32 exports that are not registry functions.
+/// Superseded by the ADVAPI32 table in api.rs; kept for reference.
+#[allow(dead_code)]
 pub(crate) static ADVAPI32: &[Api] = &[
     api("advapi32", "GetUserNameA", 2, |t, a| {
         let user = t.host.user.clone();
