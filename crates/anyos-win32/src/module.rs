@@ -145,8 +145,22 @@ fn module_handle(t: &mut Thread<'_, '_>, name: &str) -> Result<u64, Halt> {
     if let Some(m) = by_name(t, &file) {
         return Ok(handle_of(t, &m));
     }
-    if classify(&file).is_system() && system_dll_present(t, &file) {
-        return system_module(t, &file);
+    // On real Windows the C/C++ runtime DLLs (msvcrt, msvcr71, msvcp60, …)
+    // are always reachable because every system DLL chain pulls them in
+    // transitively.  Return a placeholder stub so that apps which probe for
+    // the CRT before using it (e.g. Director/Shockwave projectors) do not
+    // receive NULL and take an "environment broken" exit path.
+    //
+    // For all other system DLLs (user32, gdi32, …) we only return a stub when
+    // the process is already expected to have them: either they appear in the
+    // PE import table or were previously accessed via LoadLibrary.  This
+    // matches real Windows behaviour where a pure console app can legitimately
+    // see NULL for user32.dll.
+    if classify(&file).is_system() {
+        let always_present = matches!(classify(&file), anyos_pe::catalog::ApiFamily::Crt);
+        if always_present || system_dll_present(t, &file) {
+            return system_module(t, &file);
+        }
     }
     t.set_last_error(ERROR_MOD_NOT_FOUND);
     Ok(0)
@@ -157,7 +171,12 @@ fn get_module_handle(t: &mut Thread<'_, '_>, ptr: u64, wide: bool) -> Result<u64
         return Ok(t.process.modules[0].base);
     }
     match read_name(t, ptr, wide) {
-        Some(name) => module_handle(t, &name),
+        Some(name) => {
+            // Emit the resolved string so --trace shows what was actually queried,
+            // not just the raw guest pointer.
+            t.trace_note(&format!("GetModuleHandle: querying \"{}\"", name));
+            module_handle(t, &name)
+        }
         None => Ok(0),
     }
 }
