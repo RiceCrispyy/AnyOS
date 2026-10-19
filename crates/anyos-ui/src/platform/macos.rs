@@ -400,7 +400,18 @@ impl UIBackend for MacOSBackend {
 
         // Build NSWindowStyleMask from Windows style flags
         // NSWindowStyleMask is a newtype around NSUInteger (u32/64-bit)
-        let style_mask = NSWindowStyleMask(0x10000000 | 0x2000000 | 0x8000000 | 0x4000000);
+        // Derive from params.style by translating common WS_* flags to NSWindowStyleMask equivalents
+        let style_mask = match params.style {
+            _ if params.style & 0x10000000 != 0 => NSWindowStyleMask(Titled.rawValue),
+            _ if params.style & 0xC00000 != 0 => NSWindowStyleMask(Titled.rawValue | Closable.rawValue),
+            _ if params.style & 0x800000 != 0 => NSWindowStyleMask(Resizable.rawValue),
+            _ if params.style & 0x20000 != 0 => NSWindowStyleMask(Miniaturizable.rawValue),
+            _ if params.style & 0x10000 != 0 => NSWindowStyleMask(Resizable.rawValue),
+            _ if params.style & 0x80000 != 0 => NSWindowStyleMask(Closable.rawValue),
+            _ => NSWindowStyleMask(0),
+        };
+        // Debug: log the derived mask for verification
+        eprintln!("Derived NSWindowStyleMask from Windows style 0x{:x}: {:?}", params.style, style_mask);
 
         // Create native NSWindow
         let ns_window = self.create_ns_window(&params.title, params.rect, style_mask)?;
@@ -550,8 +561,19 @@ impl UIBackend for MacOSBackend {
     }
 
     fn pump_message(&mut self, _timeout: Duration) -> UIResult<Option<Message>> {
-        // Basic event pump - return queued messages
         // Phase 2: Integrate with Cocoa event loop
+        // Process incoming Cocoa events via the shared NSRunLoop so that
+        // NSWindow receives proper update/redraw messages and installer GUIs
+        // become interactive.
+        unsafe {
+            // Pump the Cocoa event loop briefly
+            let _: () = msg_send![class!(NSApplication), sharedApplication];
+            // Process any pending events
+            let _: () = msg_send![class!(NSApplication), _runModalForMode: NSDefaultRunLoopMode
+                // with a timeout so this doesn't block forever]
+            ;
+        }
+        // Return any queued messages if available
         Ok(self.message_queue.pop_front())
     }
 
